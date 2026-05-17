@@ -28,13 +28,30 @@ class IngestionMetadata:
 
 @dataclass
 class RawEvent:
-    """Kafka-bound raw event with metadata and payload."""
+    """Kafka-bound raw event with metadata and payload (legacy shape)."""
 
     metadata: IngestionMetadata
     payload: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
         return {"metadata": self.metadata.to_dict(), "payload": self.payload}
+
+
+@dataclass
+class IngestionEventEnvelope:
+    """Standard Kafka envelope for API ingestion events."""
+
+    event_id: str
+    source_name: str
+    event_type: str
+    event_time: str
+    ingested_at: str
+    request_status: str
+    latency_ms: float
+    payload: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
@@ -104,6 +121,12 @@ class SourceHealthEvent:
     status: str
     message: str
     observed_at: str = field(default_factory=utc_now_iso)
+    endpoint: str = ""
+    topic: str = ""
+    http_status: Optional[int] = None
+    record_count: Optional[int] = None
+    correlation_id: str = ""
+    kafka_publish: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

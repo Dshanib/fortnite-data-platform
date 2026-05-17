@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -9,8 +10,10 @@ import requests
 
 from common.exceptions import ApiClientError, IngestionError
 from common.logging import get_logger
+from common.models import utc_now_iso
 from config.settings import Settings, get_settings
 from ingestion.clients.api_client import ApiClient
+from ingestion.clients.api_result import ApiFetchResult
 
 logger = get_logger(__name__)
 
@@ -75,11 +78,11 @@ class EcosystemApiClient:
         except requests.RequestException as exc:
             raise ApiClientError("Epic OAuth authentication failed") from exc
 
-    def list_islands(self, *, size: Optional[int] = None) -> Dict[str, Any]:
-        """GET /islands — paginated island catalog."""
+    def fetch_islands(self, *, size: Optional[int] = None) -> ApiFetchResult:
+        """GET /islands — full response with HTTP metadata."""
         page_size = size or self._settings.fortnite_ecosystem_island_page_size
         try:
-            return self._api.get(
+            return self._api.get_detailed(
                 f"{self._base}/islands",
                 headers=self._auth_headers(),
                 params={"size": page_size},
@@ -87,6 +90,10 @@ class EcosystemApiClient:
         except ApiClientError as exc:
             self._raise_auth_hint(exc)
             raise
+
+    def list_islands(self, *, size: Optional[int] = None) -> Dict[str, Any]:
+        """GET /islands — paginated island catalog."""
+        return self.fetch_islands(size=size).body
 
     def list_island_summaries(self, *, size: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return island records from a list response."""
@@ -108,13 +115,13 @@ class EcosystemApiClient:
             self._raise_auth_hint(exc)
             raise
 
-    def get_metrics_bundle(
+    def fetch_metrics_bundle(
         self,
         island_code: str,
         interval: Optional[str] = None,
         metrics: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """GET /islands/{code}/metrics/{interval} with filterable metrics."""
+    ) -> ApiFetchResult:
+        """GET /islands/{code}/metrics/{interval} with HTTP metadata."""
         code = quote(island_code, safe="")
         interval = interval or self._settings.fortnite_ecosystem_metric_interval
         metric_names = metrics or self._settings.fortnite_ecosystem_default_metrics
@@ -124,9 +131,20 @@ class EcosystemApiClient:
             return self._get_with_params(url, params)
         except ApiClientError as exc:
             if exc.status_code == 404:
-                return self._get_metrics_individually(island_code, interval, metric_names)
+                return self._fetch_metrics_individually(island_code, interval, metric_names)
             self._raise_auth_hint(exc)
             raise
+
+    def get_metrics_bundle(
+        self,
+        island_code: str,
+        interval: Optional[str] = None,
+        metrics: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """GET /islands/{code}/metrics/{interval} with filterable metrics."""
+        return self.fetch_metrics_bundle(
+            island_code, interval=interval, metrics=metrics
+        ).body
 
     def get_metric_series(
         self,
@@ -135,26 +153,23 @@ class EcosystemApiClient:
         metric_name: str,
     ) -> Dict[str, Any]:
         """GET /islands/{code}/metrics/{interval}/{metric-slug}."""
-        code = quote(island_code, safe="")
-        slug = _METRIC_PATH_SLUGS.get(metric_name, metric_name)
-        url = f"{self._base}/islands/{code}/metrics/{interval}/{slug}"
-        try:
-            return self._api.get(url, headers=self._auth_headers())
-        except ApiClientError as exc:
-            self._raise_auth_hint(exc)
-            raise
+        return self.fetch_metric_series(island_code, interval, metric_name).body
 
-    def _get_metrics_individually(
+    def _fetch_metrics_individually(
         self,
         island_code: str,
         interval: str,
         metric_names: List[str],
-    ) -> Dict[str, Any]:
+    ) -> ApiFetchResult:
         """Fallback when filterable metrics endpoint is unavailable."""
+        started = time.perf_counter()
         bundle: Dict[str, Any] = {}
+        status_code = 200
         for name in metric_names:
             try:
-                bundle[name] = self.get_metric_series(island_code, interval, name)
+                result = self.fetch_metric_series(island_code, interval, name)
+                bundle[name] = result.body
+                status_code = result.status_code
             except ApiClientError as exc:
                 if exc.status_code == 404:
                     logger.warning("Metric unavailable island=%s metric=%s", island_code, name)
@@ -164,13 +179,37 @@ class EcosystemApiClient:
             raise IngestionError(
                 f"No metrics returned for island={island_code} interval={interval}"
             )
-        return bundle
+        latency_ms = (time.perf_counter() - started) * 1000
+        return ApiFetchResult(
+            status_code=status_code,
+            latency_ms=latency_ms,
+            body=bundle,
+            fetched_at=utc_now_iso(),
+        )
 
-    def _get_with_params(self, url: str, params: List[tuple[str, str]]) -> Dict[str, Any]:
+    def fetch_metric_series(
+        self,
+        island_code: str,
+        interval: str,
+        metric_name: str,
+    ) -> ApiFetchResult:
+        """GET /islands/{code}/metrics/{interval}/{metric-slug}."""
+        code = quote(island_code, safe="")
+        slug = _METRIC_PATH_SLUGS.get(metric_name, metric_name)
+        url = f"{self._base}/islands/{code}/metrics/{interval}/{slug}"
+        try:
+            return self._api.get_detailed(url, headers=self._auth_headers())
+        except ApiClientError as exc:
+            self._raise_auth_hint(exc)
+            raise
+
+    def _get_with_params(self, url: str, params: List[tuple[str, str]]) -> ApiFetchResult:
         """Perform GET with repeated query params (metrics list)."""
         last_error: Optional[Exception] = None
+        last_status: Optional[int] = None
         retries = max(1, self._settings.request_retry_count)
         for attempt in range(1, retries + 1):
+            started = time.perf_counter()
             try:
                 response = self._api._session.get(
                     url,
@@ -178,10 +217,13 @@ class EcosystemApiClient:
                     params=params,
                     timeout=self._settings.request_timeout_seconds,
                 )
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                last_status = response.status_code
                 logger.info(
-                    "GET %s status=%s attempt=%s",
+                    "GET %s status=%s latency_ms=%.1f attempt=%s",
                     url,
                     response.status_code,
+                    elapsed_ms,
                     attempt,
                 )
                 if response.status_code in {401, 403}:
@@ -200,14 +242,19 @@ class EcosystemApiClient:
                         f"HTTP {response.status_code}: {response.text[:200]}",
                         status_code=response.status_code,
                     )
-                return response.json()
-            except (requests.RequestException, ValueError, ApiClientError) as exc:
+                return ApiFetchResult(
+                    status_code=response.status_code,
+                    latency_ms=elapsed_ms,
+                    body=response.json(),
+                    fetched_at=utc_now_iso(),
+                )
+            except ApiClientError:
+                raise
+            except (requests.RequestException, ValueError) as exc:
                 last_error = exc
-                if isinstance(exc, ApiClientError) and exc.status_code in {401, 403, 429}:
-                    raise
                 if attempt < retries:
                     continue
-        raise ApiClientError(f"GET failed for {url}") from last_error
+        raise ApiClientError(f"GET failed for {url}", status_code=last_status) from last_error
 
     @staticmethod
     def _raise_auth_hint(exc: ApiClientError) -> None:

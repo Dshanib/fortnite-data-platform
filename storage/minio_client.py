@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -10,6 +11,7 @@ from minio.error import S3Error
 
 from common.exceptions import StorageError
 from common.logging import get_logger
+from common.validators import validate_minio_config, validate_minio_profile
 from config.settings import Settings, get_settings
 
 logger = get_logger(__name__)
@@ -32,10 +34,21 @@ def _parse_endpoint(endpoint: str, secure: bool) -> tuple[str, int, bool]:
 
 
 class MinioStorageClient:
-    """MinIO connectivity wrapper driven by configuration."""
+    """MinIO connectivity wrapper driven by configuration (internal or external profile)."""
 
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self._settings = settings or get_settings()
+        validate_minio_profile(self._settings.minio_profile)
+        validate_minio_config(
+            {
+                "minio_profile": self._settings.minio_profile,
+                "minio_endpoint": self._settings.minio_endpoint,
+                "minio_access_key": self._settings.minio_access_key,
+                "minio_secret_key": self._settings.minio_secret_key,
+                "minio_bucket": self._settings.minio_bucket,
+                "minio_secure": self._settings.minio_secure,
+            }
+        )
         host, port, secure = _parse_endpoint(
             self._settings.minio_endpoint, self._settings.minio_secure
         )
@@ -48,6 +61,14 @@ class MinioStorageClient:
         self._bucket = self._settings.minio_bucket
 
     @property
+    def profile(self) -> str:
+        return self._settings.minio_profile
+
+    @property
+    def endpoint(self) -> str:
+        return self._settings.minio_endpoint
+
+    @property
     def bucket(self) -> str:
         return self._bucket
 
@@ -56,7 +77,7 @@ class MinioStorageClient:
         try:
             return self._client.bucket_exists(self._bucket)
         except S3Error as exc:
-            logger.error("MinIO connectivity check failed: %s", exc)
+            logger.error("MinIO connectivity check failed profile=%s: %s", self.profile, exc)
             raise StorageError("MinIO connectivity validation failed") from exc
 
     def ensure_bucket(self) -> None:
@@ -64,14 +85,21 @@ class MinioStorageClient:
         try:
             if not self._client.bucket_exists(self._bucket):
                 self._client.make_bucket(self._bucket)
-                logger.info("Created MinIO bucket=%s", self._bucket)
+                logger.info(
+                    "Created MinIO bucket profile=%s bucket=%s",
+                    self.profile,
+                    self._bucket,
+                )
         except S3Error as exc:
             raise StorageError(f"Failed to ensure bucket {self._bucket}") from exc
 
-    def put_bytes(self, object_key: str, data: bytes, content_type: str = "application/json") -> None:
+    def put_bytes(
+        self,
+        object_key: str,
+        data: bytes,
+        content_type: str = "application/json",
+    ) -> None:
         """Upload bytes to object storage."""
-        from io import BytesIO
-
         try:
             self._client.put_object(
                 self._bucket,
@@ -80,6 +108,11 @@ class MinioStorageClient:
                 length=len(data),
                 content_type=content_type,
             )
-            logger.info("Uploaded object bucket=%s key=%s", self._bucket, object_key)
+            logger.info(
+                "Uploaded object profile=%s bucket=%s key=%s",
+                self.profile,
+                self._bucket,
+                object_key,
+            )
         except S3Error as exc:
             raise StorageError(f"Upload failed for {object_key}") from exc

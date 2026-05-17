@@ -16,8 +16,7 @@ bootstrap()
 
 from common.logging import configure_logging, get_logger
 from config.settings import get_settings
-from storage.healthcheck import check_minio_live
-from storage.minio_client import MinioStorageClient
+from storage.healthcheck import check_minio_live, ensure_minio_ready
 
 logger = get_logger(__name__)
 
@@ -31,15 +30,12 @@ def main() -> int:
         safe_print(f"MinIO health check failed: {settings.minio_health_url}")
         return 1
 
-    client = MinioStorageClient(settings)
-    if not client.validate_connectivity():
-        logger.warning("Bucket missing; attempting ensure_bucket profile=%s", settings.minio_profile)
-        client.ensure_bucket()
+    ensure_minio_ready(settings)
 
-    safe_print(
-        f"MinIO OK profile={settings.minio_profile} "
-        f"endpoint={settings.minio_endpoint} bucket={settings.minio_bucket}"
-    )
+    safe_print(f"MinIO health: OK ({settings.minio_health_url})")
+    safe_print(f"MinIO profile: {settings.minio_profile}")
+    safe_print(f"MinIO endpoint: {settings.minio_endpoint}")
+    safe_print(f"MinIO bucket: {settings.minio_bucket}")
     return 0
 
 

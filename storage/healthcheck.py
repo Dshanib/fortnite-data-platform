@@ -6,8 +6,10 @@ from typing import Optional
 
 import requests
 
+from common.exceptions import StorageError
 from common.logging import get_logger
 from config.settings import Settings, get_settings
+from storage.minio_client import MinioStorageClient
 
 logger = get_logger(__name__)
 
@@ -27,3 +29,15 @@ def check_minio_live(settings: Optional[Settings] = None) -> bool:
     except requests.RequestException as exc:
         logger.error("MinIO health request failed url=%s: %s", url, exc)
         return False
+
+
+def ensure_minio_ready(settings: Optional[Settings] = None) -> MinioStorageClient:
+    """Check liveness and ensure the configured bucket exists."""
+    settings = settings or get_settings()
+    if not check_minio_live(settings):
+        raise StorageError(f"MinIO health check failed: {settings.minio_health_url}")
+
+    client = MinioStorageClient(settings)
+    if not client.validate_connectivity():
+        client.ensure_bucket()
+    return client

@@ -19,7 +19,7 @@ def test_settings_loads_required_fields() -> None:
 
 
 def test_settings_missing_required(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     get_settings.cache_clear()
     with pytest.raises(ConfigError):
         get_settings()

@@ -48,6 +48,18 @@ def validate_timestamp(value: str) -> str:
     return value
 
 
+_ALLOWED_MINIO_PROFILES = frozenset({"internal", "external"})
+
+
+def validate_minio_profile(profile: str) -> None:
+    """Validate MINIO_PROFILE is internal (local) or external (remote host)."""
+    normalized = str(profile).strip().lower()
+    if normalized not in _ALLOWED_MINIO_PROFILES:
+        raise ValidationError(
+            f"MINIO_PROFILE must be one of {sorted(_ALLOWED_MINIO_PROFILES)}; got: {profile}"
+        )
+
+
 def validate_minio_config(config: Mapping[str, Any]) -> None:
     """Validate MinIO configuration completeness."""
     required = (

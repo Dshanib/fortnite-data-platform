@@ -58,11 +58,13 @@ class Settings:
 
     fortnite_api_base_url: str
     fortnite_api_key: str
+    fortnite_cosmetics_kafka_chunk_size: int
     fortnite_ecosystem_api_base_url: str
     fortnite_client_id: str
     fortnite_client_secret: str
     fortnite_ecosystem_metric_interval: str
     fortnite_ecosystem_island_page_size: int
+    fortnite_ecosystem_demo_island_code: str
     fortnite_ecosystem_default_metrics: List[str]
 
     log_level: str
@@ -119,6 +121,9 @@ def get_settings() -> Settings:
         duckdb_path=_optional("DUCKDB_PATH", str(_PROJECT_ROOT / "data" / "serving.duckdb")),
         fortnite_api_base_url=_optional("FORTNITE_API_BASE_URL", "https://fortnite-api.com"),
         fortnite_api_key=_optional("FORTNITE_API_KEY", ""),
+        fortnite_cosmetics_kafka_chunk_size=int(
+            _optional("FORTNITE_COSMETICS_KAFKA_CHUNK_SIZE", "400")
+        ),
         fortnite_ecosystem_api_base_url=_optional(
             "FORTNITE_ECOSYSTEM_API_BASE_URL", "https://api.fortnite.com/ecosystem/v1"
         ),
@@ -129,6 +134,9 @@ def get_settings() -> Settings:
         ),
         fortnite_ecosystem_island_page_size=int(
             _optional("FORTNITE_ECOSYSTEM_ISLAND_PAGE_SIZE", "100")
+        ),
+        fortnite_ecosystem_demo_island_code=_optional(
+            "FORTNITE_ECOSYSTEM_DEMO_ISLAND_CODE", ""
         ),
         fortnite_ecosystem_default_metrics=_parse_csv(
             _optional(

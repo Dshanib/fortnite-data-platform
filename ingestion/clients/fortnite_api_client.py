@@ -10,6 +10,7 @@ from common.exceptions import ApiClientError, IngestionError
 from common.logging import get_logger
 from config.settings import Settings, get_settings
 from ingestion.clients.api_client import ApiClient
+from ingestion.clients.api_result import ApiFetchResult
 
 logger = get_logger(__name__)
 
@@ -31,9 +32,13 @@ class FortniteApiClient:
             return {"Authorization": self._settings.fortnite_api_key}
         return {}
 
+    def fetch_shop(self) -> ApiFetchResult:
+        """GET /v2/shop — full response with HTTP metadata."""
+        return self._api.get_detailed(f"{self._base}/v2/shop", headers=self._headers())
+
     def get_shop(self) -> Dict[str, Any]:
         """GET /v2/shop — current item shop snapshot."""
-        return self._api.get(f"{self._base}/v2/shop", headers=self._headers())
+        return self.fetch_shop().body
 
     def get_shop_entries(self) -> List[Dict[str, Any]]:
         """Return normalized shop entries from the shop API response."""
@@ -55,9 +60,15 @@ class FortniteApiClient:
             raise IngestionError("Fortnite-API shop response contained no entries")
         return entries
 
+    def fetch_cosmetics(self) -> ApiFetchResult:
+        """GET /v2/cosmetics/br — full response with HTTP metadata."""
+        return self._api.get_detailed(
+            f"{self._base}/v2/cosmetics/br", headers=self._headers()
+        )
+
     def get_cosmetics(self) -> Dict[str, Any]:
         """GET /v2/cosmetics/br — full cosmetics catalog."""
-        return self._api.get(f"{self._base}/v2/cosmetics/br", headers=self._headers())
+        return self.fetch_cosmetics().body
 
     def get_cosmetics_list(self, *, limit: int = 500) -> List[Dict[str, Any]]:
         """Return cosmetics records capped at limit."""

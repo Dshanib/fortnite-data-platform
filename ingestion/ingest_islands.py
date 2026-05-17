@@ -2,78 +2,57 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
-from common.exceptions import IngestionError, ValidationError
+from common.exceptions import ApiClientError, IngestionError, KafkaProducerError, ValidationError
 from common.logging import configure_logging, get_logger
-from common.models import (
-    IngestionMetadata,
-    IslandsPayload,
-    RawEvent,
-    SourceHealthEvent,
-    utc_now_iso,
-)
-from common.utils import new_correlation_id
-from common.validators import validate_metadata, validate_timestamp
 from config.settings import Settings, get_settings
 from ingestion.clients.ecosystem_api_client import EcosystemApiClient
-from producers.kafka_producer import FortniteKafkaProducer
+from ingestion.pipeline import IngestionPipeline
 
 logger = get_logger(__name__)
+
 SOURCE = "fortnite_ecosystem_api"
+ENTITY = "islands"
+ENDPOINT = "/islands"
 
 
-def run_ingestion(settings: Optional[Settings] = None) -> None:
+def run_ingestion(settings: Optional[Settings] = None) -> int:
     """Fetch GET /islands and publish to fortnite.raw.islands."""
     settings = settings or get_settings()
     configure_logging(settings.log_level)
-    correlation_id = new_correlation_id()
-    producer = FortniteKafkaProducer(settings)
+    topic = settings.kafka_topic_islands
+    pipeline = IngestionPipeline(settings)
     client = EcosystemApiClient(settings)
 
     try:
         client.authenticate()
-        islands = client.list_island_summaries()
-        captured_at = utc_now_iso()
-        validate_timestamp(captured_at)
-        metadata = IngestionMetadata(
-            source=SOURCE,
-            entity="islands",
-            ingested_at=captured_at,
-            correlation_id=correlation_id,
+        fetch = client.fetch_islands()
+        if not fetch.body.get("data"):
+            raise IngestionError("Ecosystem API returned no islands")
+        pipeline.run_publish(
+            source_name=SOURCE,
+            entity=ENTITY,
+            endpoint=ENDPOINT,
+            topic=topic,
+            fetch=fetch,
+            message="Islands ingestion published to Kafka",
         )
-        validate_metadata(metadata.to_dict())
-        payload = IslandsPayload(islands=islands, captured_at=captured_at)
-        event = RawEvent(metadata=metadata, payload=payload.to_dict())
-        producer.send_event(
-            settings.kafka_topic_islands, event.to_dict(), key=correlation_id
-        )
-        health = SourceHealthEvent(
-            source=SOURCE,
-            entity="islands",
-            status="success",
-            message=f"Islands ingested count={len(islands)}",
-        )
-        producer.send_event(
-            settings.kafka_topic_ingestion_status,
-            health.to_dict(),
-            key=correlation_id,
-        )
-        logger.info("Islands ingestion complete count=%s", len(islands))
-    except (IngestionError, ValidationError) as exc:
+        return 0
+    except (IngestionError, ValidationError, ApiClientError, KafkaProducerError) as exc:
         logger.error("Islands ingestion failed: %s", exc)
-        producer.send_event(
-            settings.kafka_topic_ingestion_status,
-            SourceHealthEvent(
-                source=SOURCE, entity="islands", status="failed", message=str(exc)
-            ).to_dict(),
-            key=correlation_id,
+        pipeline.emit_failure(
+            source_name=SOURCE,
+            entity=ENTITY,
+            endpoint=ENDPOINT,
+            topic=topic,
+            exc=exc,
         )
-        raise
+        return 1
     finally:
-        producer.flush()
-        producer.close()
+        pipeline.finish()
 
 
 if __name__ == "__main__":
-    run_ingestion()
+    sys.exit(run_ingestion())

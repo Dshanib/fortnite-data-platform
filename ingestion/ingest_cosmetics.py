@@ -2,77 +2,64 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
-from common.exceptions import IngestionError, ValidationError
+from common.exceptions import ApiClientError, IngestionError, KafkaProducerError, ValidationError
 from common.logging import configure_logging, get_logger
-from common.models import (
-    CosmeticsPayload,
-    IngestionMetadata,
-    RawEvent,
-    SourceHealthEvent,
-    utc_now_iso,
-)
-from common.utils import new_correlation_id
-from common.validators import validate_metadata, validate_timestamp
 from config.settings import Settings, get_settings
+from ingestion.chunking import extract_cosmetics_records, iter_cosmetics_chunk_payloads
 from ingestion.clients.fortnite_api_client import FortniteApiClient
-from producers.kafka_producer import FortniteKafkaProducer
+from ingestion.pipeline import IngestionPipeline
 
 logger = get_logger(__name__)
+
 SOURCE = "fortnite_api_com"
+ENTITY = "cosmetics"
+ENDPOINT = "/v2/cosmetics/br"
 
 
-def run_ingestion(settings: Optional[Settings] = None) -> None:
-    """Fetch /v2/cosmetics/br and publish to fortnite.raw.cosmetics."""
+def run_ingestion(settings: Optional[Settings] = None) -> int:
+    """Fetch /v2/cosmetics/br and publish to fortnite.raw.cosmetics in chunks."""
     settings = settings or get_settings()
     configure_logging(settings.log_level)
-    correlation_id = new_correlation_id()
-    producer = FortniteKafkaProducer(settings)
+    topic = settings.kafka_topic_cosmetics
+    pipeline = IngestionPipeline(settings)
     client = FortniteApiClient(settings)
 
     try:
-        cosmetics = client.get_cosmetics_list()
-        captured_at = utc_now_iso()
-        validate_timestamp(captured_at)
-        metadata = IngestionMetadata(
-            source=SOURCE,
-            entity="cosmetics",
-            ingested_at=captured_at,
-            correlation_id=correlation_id,
+        fetch = client.fetch_cosmetics()
+        records = extract_cosmetics_records(fetch.body)
+        chunk_size = settings.fortnite_cosmetics_kafka_chunk_size
+        chunks = iter_cosmetics_chunk_payloads(
+            fetch.body,
+            chunk_size=chunk_size,
+            correlation_id=pipeline.correlation_id,
         )
-        validate_metadata(metadata.to_dict())
-        payload = CosmeticsPayload(cosmetics=cosmetics, captured_at=captured_at)
-        event = RawEvent(metadata=metadata, payload=payload.to_dict())
-        producer.send_event(
-            settings.kafka_topic_cosmetics, event.to_dict(), key=correlation_id
+        pipeline.run_publish_chunked(
+            source_name=SOURCE,
+            entity=ENTITY,
+            endpoint=ENDPOINT,
+            topic=topic,
+            fetch=fetch,
+            chunk_payloads=chunks,
+            message="Cosmetics ingestion published to Kafka",
+            total_record_count=len(records),
         )
-        health = SourceHealthEvent(
-            source=SOURCE,
-            entity="cosmetics",
-            status="success",
-            message=f"Cosmetics ingested count={len(cosmetics)}",
-        )
-        producer.send_event(
-            settings.kafka_topic_ingestion_status,
-            health.to_dict(),
-            key=correlation_id,
-        )
-        logger.info("Cosmetics ingestion complete count=%s", len(cosmetics))
-    except (IngestionError, ValidationError) as exc:
+        return 0
+    except (IngestionError, ValidationError, ApiClientError, KafkaProducerError) as exc:
         logger.error("Cosmetics ingestion failed: %s", exc)
-        producer.send_event(
-            settings.kafka_topic_ingestion_status,
-            SourceHealthEvent(
-                source=SOURCE, entity="cosmetics", status="failed", message=str(exc)
-            ).to_dict(),
-            key=correlation_id,
+        pipeline.emit_failure(
+            source_name=SOURCE,
+            entity=ENTITY,
+            endpoint=ENDPOINT,
+            topic=topic,
+            exc=exc,
         )
-        raise
+        return 1
     finally:
-        producer.flush()
-        producer.close()
+        pipeline.finish()
 
 
 if __name__ == "__main__":
-    run_ingestion()
+    sys.exit(run_ingestion())

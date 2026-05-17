@@ -2,118 +2,128 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Dict, List, Optional
 
-from common.exceptions import ApiClientError, IngestionError, ValidationError
+from common.exceptions import ApiClientError, IngestionError, KafkaProducerError, ValidationError
 from common.logging import configure_logging, get_logger
-from common.models import (
-    IngestionMetadata,
-    IslandMetricsPayload,
-    RawEvent,
-    SourceHealthEvent,
-    utc_now_iso,
-)
-from common.utils import new_correlation_id
-from common.validators import validate_metadata, validate_timestamp
+from common.models import SourceHealthEvent
 from config.settings import Settings, get_settings
 from ingestion.clients.ecosystem_api_client import EcosystemApiClient
-from producers.kafka_producer import FortniteKafkaProducer
+from ingestion.pipeline import IngestionPipeline, build_envelope, print_ingestion_summary
 
 logger = get_logger(__name__)
+
 SOURCE = "fortnite_ecosystem_api"
+ENTITY = "island_metrics"
 
 
 def _island_code(island: Dict[str, Any]) -> str:
     return str(island.get("code") or island.get("displayName") or "")
 
 
-def run_ingestion(settings: Optional[Settings] = None) -> None:
-    """Fetch metrics per island and publish to fortnite.raw.island_metrics."""
+def _metrics_endpoint(island_code: str, interval: str) -> str:
+    return f"/islands/{island_code}/metrics/{interval}"
+
+
+def _resolve_island_codes(
+    client: EcosystemApiClient,
+    settings: Settings,
+    *,
+    island_code: Optional[str],
+    max_islands: Optional[int],
+) -> List[str]:
+    if island_code:
+        return [island_code]
+
+    demo = settings.fortnite_ecosystem_demo_island_code.strip()
+    if demo:
+        return [demo]
+
+    summaries = client.list_island_summaries()
+    codes = [code for island in summaries if (code := _island_code(island))]
+    if not codes:
+        raise IngestionError("No islands available for metrics ingestion")
+
+    if max_islands is not None:
+        return codes[: max(1, max_islands)]
+    return codes
+
+
+def run_ingestion(
+    settings: Optional[Settings] = None,
+    *,
+    island_code: Optional[str] = None,
+    max_islands: Optional[int] = None,
+) -> int:
+    """Fetch island metrics and publish to fortnite.raw.island_metrics."""
     settings = settings or get_settings()
     configure_logging(settings.log_level)
-    correlation_id = new_correlation_id()
-    producer = FortniteKafkaProducer(settings)
-    client = EcosystemApiClient(settings)
+    topic = settings.kafka_topic_island_metrics
     interval = settings.fortnite_ecosystem_metric_interval
-    ingested = 0
-    failures = 0
+    pipeline = IngestionPipeline(settings)
+    client = EcosystemApiClient(settings)
 
     try:
         client.authenticate()
-        islands = client.list_island_summaries()
-        captured_at = utc_now_iso()
-        validate_timestamp(captured_at)
-
-        for island in islands:
-            code = _island_code(island)
-            if not code:
-                continue
-            try:
-                metrics = client.get_metrics_bundle(code, interval=interval)
-            except ApiClientError as exc:
-                failures += 1
-                logger.warning("Metrics failed island=%s: %s", code, exc)
-                if exc.status_code in {401, 403, 429}:
-                    raise
-                continue
-
-            metadata = IngestionMetadata(
-                source=SOURCE,
-                entity="island_metrics",
-                ingested_at=captured_at,
-                correlation_id=correlation_id,
-            )
-            validate_metadata(metadata.to_dict())
-            payload = IslandMetricsPayload(
-                island_code=code,
-                interval=interval,
-                metrics=metrics,
-                captured_at=captured_at,
-            )
-            event = RawEvent(metadata=metadata, payload=payload.to_dict())
-            producer.send_event(
-                settings.kafka_topic_island_metrics,
-                event.to_dict(),
-                key=f"{correlation_id}:{code}",
-            )
-            ingested += 1
-
-        if ingested == 0:
-            raise IngestionError("No island metrics ingested")
-
-        health = SourceHealthEvent(
-            source=SOURCE,
-            entity="island_metrics",
-            status="success",
-            message=f"Metrics ingested islands={ingested} failures={failures}",
+        codes = _resolve_island_codes(
+            client, settings, island_code=island_code, max_islands=max_islands
         )
-        producer.send_event(
-            settings.kafka_topic_ingestion_status,
-            health.to_dict(),
-            key=correlation_id,
-        )
-        logger.info(
-            "Island metrics ingestion complete ingested=%s failures=%s",
-            ingested,
-            failures,
-        )
-    except (IngestionError, ValidationError, ApiClientError) as exc:
-        logger.error("Island metrics ingestion failed: %s", exc)
-        producer.send_event(
-            settings.kafka_topic_ingestion_status,
+
+        for code in codes:
+            fetch = client.fetch_metrics_bundle(code, interval=interval)
+            envelope = build_envelope(
+                event_id=f"{pipeline.correlation_id}:{code}",
+                source_name=SOURCE,
+                event_type=ENTITY,
+                fetch=fetch,
+            )
+            pipeline.publish_envelope(
+                envelope,
+                topic=topic,
+                key=f"{pipeline.correlation_id}:{code}",
+            )
+            logger.info("Published island metrics island=%s", code)
+
+        endpoint = _metrics_endpoint(codes[0], interval)
+        pipeline.publish_health(
             SourceHealthEvent(
                 source=SOURCE,
-                entity="island_metrics",
-                status="failed",
-                message=str(exc),
-            ).to_dict(),
-            key=correlation_id,
+                entity=ENTITY,
+                status="success",
+                message=f"Island metrics published count={len(codes)}",
+                endpoint=endpoint,
+                topic=topic,
+                http_status=200,
+                record_count=len(codes),
+                correlation_id=pipeline.correlation_id,
+                kafka_publish="success",
+            )
         )
-        raise
+        print_ingestion_summary(
+            source=SOURCE,
+            endpoint=endpoint,
+            topic=topic,
+            http_status=200,
+            record_count=len(codes),
+            kafka_publish="success",
+            status="success",
+        )
+        return 0
+    except (IngestionError, ValidationError, ApiClientError, KafkaProducerError) as exc:
+        logger.error("Island metrics ingestion failed: %s", exc)
+        sample_code = island_code or settings.fortnite_ecosystem_demo_island_code or "{code}"
+        pipeline.emit_failure(
+            source_name=SOURCE,
+            entity=ENTITY,
+            endpoint=_metrics_endpoint(sample_code, interval),
+            topic=topic,
+            exc=exc,
+        )
+        return 1
     finally:
-        producer.flush()
-        producer.close()
+        pipeline.finish()
 
 
 if __name__ == "__main__":
-    run_ingestion()
+    sys.exit(run_ingestion())

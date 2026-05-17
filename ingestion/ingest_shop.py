@@ -2,69 +2,54 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
-from common.exceptions import IngestionError, ValidationError
+from common.exceptions import ApiClientError, IngestionError, KafkaProducerError, ValidationError
 from common.logging import configure_logging, get_logger
-from common.models import IngestionMetadata, RawEvent, ShopPayload, SourceHealthEvent, utc_now_iso
-from common.utils import new_correlation_id
-from common.validators import validate_metadata, validate_timestamp
 from config.settings import Settings, get_settings
 from ingestion.clients.fortnite_api_client import FortniteApiClient
-from producers.kafka_producer import FortniteKafkaProducer
+from ingestion.pipeline import IngestionPipeline
 
 logger = get_logger(__name__)
+
 SOURCE = "fortnite_api_com"
+ENTITY = "shop"
+ENDPOINT = "/v2/shop"
 
 
-def run_ingestion(settings: Optional[Settings] = None) -> None:
+def run_ingestion(settings: Optional[Settings] = None) -> int:
     """Fetch /v2/shop and publish to fortnite.raw.shop."""
     settings = settings or get_settings()
     configure_logging(settings.log_level)
-    correlation_id = new_correlation_id()
-    producer = FortniteKafkaProducer(settings)
+    topic = settings.kafka_topic_shop
+    pipeline = IngestionPipeline(settings)
     client = FortniteApiClient(settings)
 
     try:
-        items = client.get_shop_entries()
-        captured_at = utc_now_iso()
-        validate_timestamp(captured_at)
-        metadata = IngestionMetadata(
-            source=SOURCE,
-            entity="shop",
-            ingested_at=captured_at,
-            correlation_id=correlation_id,
+        fetch = client.fetch_shop()
+        pipeline.run_publish(
+            source_name=SOURCE,
+            entity=ENTITY,
+            endpoint=ENDPOINT,
+            topic=topic,
+            fetch=fetch,
+            message="Shop ingestion published to Kafka",
         )
-        validate_metadata(metadata.to_dict())
-        payload = ShopPayload(items=items, captured_at=captured_at)
-        event = RawEvent(metadata=metadata, payload=payload.to_dict())
-        producer.send_event(settings.kafka_topic_shop, event.to_dict(), key=correlation_id)
-        health = SourceHealthEvent(
-            source=SOURCE,
-            entity="shop",
-            status="success",
-            message=f"Shop ingested items={len(items)}",
-        )
-        producer.send_event(
-            settings.kafka_topic_ingestion_status,
-            health.to_dict(),
-            key=correlation_id,
-        )
-        logger.info("Shop ingestion complete items=%s", len(items))
-    except (IngestionError, ValidationError) as exc:
+        return 0
+    except (IngestionError, ValidationError, ApiClientError, KafkaProducerError) as exc:
         logger.error("Shop ingestion failed: %s", exc)
-        producer.send_event(
-            settings.kafka_topic_ingestion_status,
-            SourceHealthEvent(
-                source=SOURCE, entity="shop", status="failed", message=str(exc)
-            ).to_dict(),
-            key=correlation_id,
+        pipeline.emit_failure(
+            source_name=SOURCE,
+            entity=ENTITY,
+            endpoint=ENDPOINT,
+            topic=topic,
+            exc=exc,
         )
-        raise
+        return 1
     finally:
-        producer.flush()
-        producer.close()
+        pipeline.finish()
 
 
 if __name__ == "__main__":
-    run_ingestion()
+    sys.exit(run_ingestion())

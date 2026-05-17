@@ -65,38 +65,70 @@ Sends one small JSON test event to `fortnite.ops.ingestion_status` and prints su
 
 ### Kafka topics
 
-| Topic | Future producer |
-|-------|-----------------|
+| Topic | Producer |
+|-------|----------|
 | `fortnite.raw.shop` | `ingest_shop` |
 | `fortnite.raw.cosmetics` | `ingest_cosmetics` |
 | `fortnite.raw.islands` | `ingest_islands` |
 | `fortnite.raw.island_metrics` | `ingest_island_metrics` |
-| `fortnite.ops.ingestion_status` | health / connectivity |
-
-Ingestion pipelines are **not** wired to Kafka in this validation phase.
+| `fortnite.ops.ingestion_status` | ingestion health |
 
 For LAN/external clients, adjust `KAFKA_ADVERTISED_LISTENERS` in `docker-compose.yml` (see comments there).
 
-## Docker (MinIO + full stack)
+## MinIO (Bronze landing zone)
 
-Infra credentials are read from your **local `.env` only** (not documented here).
+Credentials and endpoint are read from `.env` only — never commit secrets.
+
+### Profiles
+
+| Profile | Use case | Example `MINIO_ENDPOINT` |
+|---------|----------|---------------------------|
+| `internal` | Local Docker MinIO | `http://localhost:9000` |
+| `external` | Remote MinIO / LAN host | `http://192.168.1.50:9000` |
+
+Set `MINIO_PROFILE`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, `MINIO_SECURE` in `.env`. See `.env.internal.example` / `.env.external.example`.
+
+### Start and verify
 
 ```bash
 docker compose --env-file .env up -d minio
 python scripts/check_minio.py
-python scripts/send_minio_test_data.py
 ```
 
-`send_minio_test_data.py` writes one sample JSON object under each medallion prefix (`bronze/`, `silver/`, `gold/`) using paths like `{layer}/{entity}/{YYYY/MM/DD}/{file}.json`.
+### Kafka → Bronze (JSON, one-shot consumer)
+
+Bronze stores **raw Kafka event JSON** (full envelope + payload) with minimal transformation. Paths are hive-style:
+
+`bronze/source=shop/event_date=YYYY-MM-DD/raw_shop_<timestamp>_<uuid>.json`
+
+Silver/Gold **Parquet** layers come later (Spark processing).
+
+```bash
+# Default: up to 10 messages from fortnite.raw.shop
+python scripts/kafka_to_bronze_once.py
+
+python scripts/kafka_to_bronze_once.py --topic fortnite.raw.shop --max-messages 5
+python scripts/kafka_to_bronze_once.py --topic fortnite.raw.island_metrics --max-messages 5
+python scripts/kafka_to_bronze_once.py --full
+```
+
+Run ingestion first so Kafka topics contain data. Console: http://localhost:9001
 
 ## Ingestion
+
+Requires Kafka running and topics created (see **Kafka** above). Each pipeline publishes a standard envelope (`event_id`, `source_name`, `event_type`, `event_time`, `ingested_at`, `request_status`, `latency_ms`, `payload`) with the **full raw API JSON** in `payload`, plus a health event to `fortnite.ops.ingestion_status`.
 
 ```bash
 python -m ingestion.ingest_shop
 python -m ingestion.ingest_cosmetics
 python -m ingestion.ingest_islands
 python -m ingestion.ingest_island_metrics
+python scripts/run_all_ingestion_once.py
 ```
+
+`run_all_ingestion_once.py` runs shop, cosmetics, islands, and **one** island metrics fetch (first island or `FORTNITE_ECOSYSTEM_DEMO_ISLAND_CODE` in `.env`). Full `ingest_island_metrics` without `max_islands` processes all islands returned by the API.
+
+Cosmetics are published in **chunks** (`FORTNITE_COSMETICS_KAFKA_CHUNK_SIZE`, default `400`) so each Kafka message stays under broker size limits. Each chunk payload includes `ingestion_batch` metadata for reassembly downstream.
 
 ## Telegram bot
 
