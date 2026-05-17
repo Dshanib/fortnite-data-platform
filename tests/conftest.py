@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from config.settings import get_settings
@@ -15,9 +13,10 @@ def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     get_settings.cache_clear()
     env = {
         "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-        "KAFKA_TOPIC_CCU": "fortnite.raw.ccu",
         "KAFKA_TOPIC_SHOP": "fortnite.raw.shop",
         "KAFKA_TOPIC_COSMETICS": "fortnite.raw.cosmetics",
+        "KAFKA_TOPIC_ISLANDS": "fortnite.raw.islands",
+        "KAFKA_TOPIC_ISLAND_METRICS": "fortnite.raw.island_metrics",
         "KAFKA_TOPIC_INGESTION_STATUS": "fortnite.ops.ingestion_status",
         "MINIO_PROFILE": "internal",
         "MINIO_ENDPOINT": "http://localhost:9000",
@@ -29,7 +28,12 @@ def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         "DUCKDB_PATH": str(tmp_path / "test.duckdb"),
         "FORTNITE_API_BASE_URL": "https://fortnite-api.com",
         "FORTNITE_API_KEY": "",
-        "CCU_SOURCE_URL": "https://example.com/status",
+        "FORTNITE_ECOSYSTEM_API_BASE_URL": "https://api.fortnite.com/ecosystem/v1",
+        "FORTNITE_CLIENT_ID": "",
+        "FORTNITE_CLIENT_SECRET": "",
+        "FORTNITE_ECOSYSTEM_METRIC_INTERVAL": "minute",
+        "FORTNITE_ECOSYSTEM_ISLAND_PAGE_SIZE": "100",
+        "FORTNITE_ECOSYSTEM_DEFAULT_METRICS": "peakCCU,uniquePlayers,plays,minutesPlayed",
         "LOG_LEVEL": "WARNING",
         "REQUEST_TIMEOUT_SECONDS": "5",
         "REQUEST_RETRY_COUNT": "1",

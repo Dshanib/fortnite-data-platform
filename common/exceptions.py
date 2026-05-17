@@ -20,6 +20,10 @@ class StorageError(Exception):
 class ApiClientError(Exception):
     """Raised when an HTTP API call fails after retries."""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class ScrapeClientError(Exception):
     """Raised when scraping fails."""

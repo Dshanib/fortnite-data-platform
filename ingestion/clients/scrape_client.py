@@ -1,9 +1,16 @@
-"""HTML scraping client using requests and BeautifulSoup."""
+"""DEPRECATED: Web scraping is not part of the primary ingestion architecture.
+
+Retained only as an optional legacy fallback. Do not use in new pipelines.
+Primary data sources:
+  - https://fortnite-api.com (shop, cosmetics)
+  - https://api.fortnite.com/ecosystem/v1 (islands, metrics)
+"""
 
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+import warnings
+from typing import List, Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -16,9 +23,14 @@ logger = get_logger(__name__)
 
 
 class ScrapeClient:
-    """Configurable selector-based HTML scraper (no browser automation)."""
+    """Legacy HTML scraper — deprecated, not used by main ingestion flow."""
 
     def __init__(self, settings: Optional[Settings] = None) -> None:
+        warnings.warn(
+            "ScrapeClient is deprecated; use Fortnite API clients instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._settings = settings or get_settings()
         self._session = requests.Session()
 
@@ -53,7 +65,7 @@ class ScrapeClient:
         html: str,
         selectors: List[str],
     ) -> List[str]:
-        """Extract text nodes matching any of the provided CSS selectors."""
+        """Extract text nodes matching CSS selectors."""
         soup = BeautifulSoup(html, "html.parser")
         results: List[str] = []
         for selector in selectors:
@@ -65,20 +77,3 @@ class ScrapeClient:
             except Exception as exc:
                 logger.warning("Selector parse failed selector=%s: %s", selector, exc)
         return results
-
-    def extract_first_integer(
-        self,
-        html: str,
-        selectors: List[str],
-    ) -> Optional[int]:
-        """Return first integer found in matched selector text."""
-        import re
-
-        for text in self.extract_text_by_selectors(html, selectors):
-            match = re.search(r"[\d,]+", text.replace(",", ""))
-            if match:
-                try:
-                    return int(match.group().replace(",", ""))
-                except ValueError:
-                    continue
-        return None

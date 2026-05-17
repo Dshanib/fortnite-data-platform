@@ -1,4 +1,4 @@
-"""Cosmetics catalog ingestion from Fortnite-API.com."""
+"""Island catalog ingestion from Fortnite Ecosystem API."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from typing import Optional
 from common.exceptions import IngestionError, ValidationError
 from common.logging import configure_logging, get_logger
 from common.models import (
-    CosmeticsPayload,
     IngestionMetadata,
+    IslandsPayload,
     RawEvent,
     SourceHealthEvent,
     utc_now_iso,
@@ -16,55 +16,56 @@ from common.models import (
 from common.utils import new_correlation_id
 from common.validators import validate_metadata, validate_timestamp
 from config.settings import Settings, get_settings
-from ingestion.clients.fortnite_api_client import FortniteApiClient
+from ingestion.clients.ecosystem_api_client import EcosystemApiClient
 from producers.kafka_producer import FortniteKafkaProducer
 
 logger = get_logger(__name__)
-SOURCE = "fortnite_api_com"
+SOURCE = "fortnite_ecosystem_api"
 
 
 def run_ingestion(settings: Optional[Settings] = None) -> None:
-    """Fetch /v2/cosmetics/br and publish to fortnite.raw.cosmetics."""
+    """Fetch GET /islands and publish to fortnite.raw.islands."""
     settings = settings or get_settings()
     configure_logging(settings.log_level)
     correlation_id = new_correlation_id()
     producer = FortniteKafkaProducer(settings)
-    client = FortniteApiClient(settings)
+    client = EcosystemApiClient(settings)
 
     try:
-        cosmetics = client.get_cosmetics_list()
+        client.authenticate()
+        islands = client.list_island_summaries()
         captured_at = utc_now_iso()
         validate_timestamp(captured_at)
         metadata = IngestionMetadata(
             source=SOURCE,
-            entity="cosmetics",
+            entity="islands",
             ingested_at=captured_at,
             correlation_id=correlation_id,
         )
         validate_metadata(metadata.to_dict())
-        payload = CosmeticsPayload(cosmetics=cosmetics, captured_at=captured_at)
+        payload = IslandsPayload(islands=islands, captured_at=captured_at)
         event = RawEvent(metadata=metadata, payload=payload.to_dict())
         producer.send_event(
-            settings.kafka_topic_cosmetics, event.to_dict(), key=correlation_id
+            settings.kafka_topic_islands, event.to_dict(), key=correlation_id
         )
         health = SourceHealthEvent(
             source=SOURCE,
-            entity="cosmetics",
+            entity="islands",
             status="success",
-            message=f"Cosmetics ingested count={len(cosmetics)}",
+            message=f"Islands ingested count={len(islands)}",
         )
         producer.send_event(
             settings.kafka_topic_ingestion_status,
             health.to_dict(),
             key=correlation_id,
         )
-        logger.info("Cosmetics ingestion complete count=%s", len(cosmetics))
+        logger.info("Islands ingestion complete count=%s", len(islands))
     except (IngestionError, ValidationError) as exc:
-        logger.error("Cosmetics ingestion failed: %s", exc)
+        logger.error("Islands ingestion failed: %s", exc)
         producer.send_event(
             settings.kafka_topic_ingestion_status,
             SourceHealthEvent(
-                source=SOURCE, entity="cosmetics", status="failed", message=str(exc)
+                source=SOURCE, entity="islands", status="failed", message=str(exc)
             ).to_dict(),
             key=correlation_id,
         )

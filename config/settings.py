@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from dotenv import load_dotenv
 
@@ -31,14 +31,19 @@ def _optional(name: str, default: str) -> str:
     return str(value).strip()
 
 
+def _parse_csv(value: str) -> List[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
 @dataclass(frozen=True)
 class Settings:
     """Typed configuration object."""
 
     kafka_bootstrap_servers: str
-    kafka_topic_ccu: str
     kafka_topic_shop: str
     kafka_topic_cosmetics: str
+    kafka_topic_islands: str
+    kafka_topic_island_metrics: str
     kafka_topic_ingestion_status: str
 
     minio_profile: str
@@ -53,7 +58,12 @@ class Settings:
 
     fortnite_api_base_url: str
     fortnite_api_key: str
-    ccu_source_url: str
+    fortnite_ecosystem_api_base_url: str
+    fortnite_client_id: str
+    fortnite_client_secret: str
+    fortnite_ecosystem_metric_interval: str
+    fortnite_ecosystem_island_page_size: int
+    fortnite_ecosystem_default_metrics: List[str]
 
     log_level: str
     request_timeout_seconds: int
@@ -88,10 +98,13 @@ def get_settings() -> Settings:
 
     settings = Settings(
         kafka_bootstrap_servers=_require("KAFKA_BOOTSTRAP_SERVERS"),
-        kafka_topic_ccu=_optional("KAFKA_TOPIC_CCU", "fortnite.raw.ccu"),
         kafka_topic_shop=_optional("KAFKA_TOPIC_SHOP", "fortnite.raw.shop"),
         kafka_topic_cosmetics=_optional(
             "KAFKA_TOPIC_COSMETICS", "fortnite.raw.cosmetics"
+        ),
+        kafka_topic_islands=_optional("KAFKA_TOPIC_ISLANDS", "fortnite.raw.islands"),
+        kafka_topic_island_metrics=_optional(
+            "KAFKA_TOPIC_ISLAND_METRICS", "fortnite.raw.island_metrics"
         ),
         kafka_topic_ingestion_status=_optional(
             "KAFKA_TOPIC_INGESTION_STATUS", "fortnite.ops.ingestion_status"
@@ -104,11 +117,25 @@ def get_settings() -> Settings:
         minio_secure=parse_bool(os.getenv("MINIO_SECURE"), default=False),
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         duckdb_path=_optional("DUCKDB_PATH", str(_PROJECT_ROOT / "data" / "serving.duckdb")),
-        fortnite_api_base_url=_optional(
-            "FORTNITE_API_BASE_URL", "https://fortnite-api.com"
-        ),
+        fortnite_api_base_url=_optional("FORTNITE_API_BASE_URL", "https://fortnite-api.com"),
         fortnite_api_key=_optional("FORTNITE_API_KEY", ""),
-        ccu_source_url=_require("CCU_SOURCE_URL"),
+        fortnite_ecosystem_api_base_url=_optional(
+            "FORTNITE_ECOSYSTEM_API_BASE_URL", "https://api.fortnite.com/ecosystem/v1"
+        ),
+        fortnite_client_id=_optional("FORTNITE_CLIENT_ID", ""),
+        fortnite_client_secret=_optional("FORTNITE_CLIENT_SECRET", ""),
+        fortnite_ecosystem_metric_interval=_optional(
+            "FORTNITE_ECOSYSTEM_METRIC_INTERVAL", "minute"
+        ),
+        fortnite_ecosystem_island_page_size=int(
+            _optional("FORTNITE_ECOSYSTEM_ISLAND_PAGE_SIZE", "100")
+        ),
+        fortnite_ecosystem_default_metrics=_parse_csv(
+            _optional(
+                "FORTNITE_ECOSYSTEM_DEFAULT_METRICS",
+                "peakCCU,uniquePlayers,plays,minutesPlayed",
+            )
+        ),
         log_level=_optional("LOG_LEVEL", "INFO"),
         request_timeout_seconds=int(_optional("REQUEST_TIMEOUT_SECONDS", "30")),
         request_retry_count=int(_optional("REQUEST_RETRY_COUNT", "3")),

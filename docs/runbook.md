@@ -8,11 +8,17 @@
 4. Health checks:
    - `python scripts/check_minio.py`
    - `python scripts/check_kafka.py`
+4. Validate APIs:
+   - `python scripts/test_fortnite_api.py`
+   - `python scripts/test_fortnite_ecosystem_api.py`
 5. Run ingestion (requires Kafka + sources):
-   - `python -m ingestion.ingest_ccu`
    - `python -m ingestion.ingest_shop`
    - `python -m ingestion.ingest_cosmetics`
+   - `python -m ingestion.ingest_islands`
+   - `python -m ingestion.ingest_island_metrics`
 6. Start bot: `python -m bot.app`
+
+Note: `ingest_ccu` is deprecated; use `ingest_island_metrics` for peak CCU.
 
 ## MinIO profiles
 

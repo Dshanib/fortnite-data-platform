@@ -1,105 +1,80 @@
 # Fortnite Cloud DE — Phase 1
 
-Modular data engineering foundation: ingestion, Kafka, MinIO storage, DuckDB serving, and Telegram bot.
+Modular data engineering foundation with **dual API ingestion**, Kafka, MinIO, DuckDB serving scaffold, and Telegram bot.
 
-## Scope (Phase 1)
+## Data sources (API only — no scraping)
 
-**Included:** ingestion, Kafka producer, MinIO abstraction, DuckDB serving, Telegram bot, validation, config, Docker Compose, tests, docs.
+| Source | URL | Used for |
+|--------|-----|----------|
+| [Fortnite-API.com](https://fortnite-api.com) | `https://fortnite-api.com` | Shop (`/v2/shop`), cosmetics (`/v2/cosmetics/br`) |
+| [Fortnite Ecosystem API](https://api.fortnite.com/ecosystem/v1/docs/) | `https://api.fortnite.com/ecosystem/v1` | Islands, peak CCU, unique players, plays, minutes played |
 
-**Excluded:** PySpark, NLP-to-SQL, dashboards, Airflow, production cloud deployment.
+Web scraping is **not** part of the primary architecture. `scrape_client.py` is deprecated.
 
-## Architecture
-
-```
-Fortnite API / scrape → ingestion → Kafka → (future) → MinIO bronze
-                                                    ↘ DuckDB → bot
-```
-
-See [docs/architecture.md](docs/architecture.md) and [docs/runbook.md](docs/runbook.md).
-
-## Prerequisites
-
-- Python 3.14+ (`py -3.14`)
-- Docker Desktop
-- Git
+See [docs/architecture.md](docs/architecture.md).
 
 ## Setup
 
 ```bash
 cd d.e_proj
 py -3.14 -m venv .venv
-source .venv/Scripts/activate   # Windows Git Bash
+source scripts/env.sh
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` with your `TELEGRAM_BOT_TOKEN` and MinIO settings.
+Edit `.env`:
 
-### MinIO: internal vs external
+- `FORTNITE_API_KEY` — optional, for Fortnite-API.com
+- `FORTNITE_CLIENT_ID` / `FORTNITE_CLIENT_SECRET` — optional, for Ecosystem API OAuth
+- `TELEGRAM_BOT_TOKEN`, MinIO, Kafka settings
 
-| Profile | Use case | Example file |
-|---------|----------|----------------|
-| `internal` | Local Docker MinIO | [.env.internal.example](.env.internal.example) |
-| `external` | Remote MinIO on LAN | [.env.external.example](.env.external.example) |
-
-Copy the relevant MinIO block into `.env`. No localhost assumptions are hardcoded in code.
-
-## Docker (MinIO + Kafka)
-
-All local infrastructure runs via Docker Compose — **do not run a separate MinIO install** for this project.
+## Validate API connectivity
 
 ```bash
-# Stop any old standalone MinIO container using ports 9000/9001 if present
-docker compose up -d
+python scripts/test_fortnite_api.py
+python scripts/test_fortnite_ecosystem_api.py
 ```
 
-| Service | URL |
-|---------|-----|
-| MinIO S3 API | `http://localhost:9000` |
-| MinIO Console | `http://localhost:9001` (user/pass: `minioadmin`) |
-| Kafka | `localhost:9092` |
-
-`minio-init` creates the `fortnite-data` bucket automatically. Set `MINIO_ENDPOINT=http://localhost:9000` in `.env`.
-
-## Kafka topics
-
-| Topic | Default name |
-|-------|----------------|
-| CCU | `fortnite.raw.ccu` |
-| Shop | `fortnite.raw.shop` |
-| Cosmetics | `fortnite.raw.cosmetics` |
-| Ingestion status | `fortnite.ops.ingestion_status` |
-
-## Health checks
+## Docker (Kafka + MinIO)
 
 ```bash
+docker compose up -d
 python scripts/check_minio.py
 python scripts/check_kafka.py
 ```
 
-## DuckDB serving
+## Kafka topics
 
-```bash
-python -m serving.duckdb_init
-```
-
-Predefined queries live in `serving/query_service.py` (no free-form SQL from the bot).
+| Topic | Producer |
+|-------|----------|
+| `fortnite.raw.shop` | `ingest_shop` |
+| `fortnite.raw.cosmetics` | `ingest_cosmetics` |
+| `fortnite.raw.islands` | `ingest_islands` |
+| `fortnite.raw.island_metrics` | `ingest_island_metrics` |
+| `fortnite.ops.ingestion_status` | all pipelines |
 
 ## Ingestion
 
 ```bash
-python -m ingestion.ingest_ccu
 python -m ingestion.ingest_shop
 python -m ingestion.ingest_cosmetics
+python -m ingestion.ingest_islands
+python -m ingestion.ingest_island_metrics
 ```
 
 ## Telegram bot
 
+Requires `TELEGRAM_BOT_TOKEN` in `.env`.
+
 ```bash
+source scripts/env.sh
 python -m bot.app
 ```
 
-Supported intents: current CCU, avg CCU today, anomalies, shop summary, source health, help.
+Example queries: `current ccu`, `average today`, `shop`, `health`. Bot uses mock `query_service` until DuckDB is wired.
+
+**Future bot intents (documented):** per-island peak CCU, top islands by plays — not implemented yet.
 
 ## Tests
 
@@ -108,26 +83,11 @@ python -m compileall .
 python -m pytest
 ```
 
-## Project layout
-
-```
-config/          settings
-common/          logging, models, validators
-producers/       Kafka producer
-ingestion/       CCU, shop, cosmetics + clients
-storage/         MinIO, paths, writers
-serving/         DuckDB + query_service
-bot/             Telegram handlers
-scripts/         health checks
-tests/           unit tests
-docs/            architecture, runbook
-```
-
 ## Troubleshooting
 
-- **`python` permission denied:** activate `.venv` or run `scripts/setup-path.ps1`
-- **Low RAM:** close apps before full Docker stack (~4 GB+ free recommended)
-- **No bot data:** tables empty until pipelines populate DuckDB (Phase 1 returns structured no-data)
+- **Ecosystem 401/403:** set Epic OAuth credentials in `.env`
+- **Ecosystem 429:** rate limited; retry later or reduce `FORTNITE_ECOSYSTEM_ISLAND_PAGE_SIZE`
+- **`python` permission denied:** use `source scripts/env.sh`
 
 ## Git
 

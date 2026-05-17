@@ -72,6 +72,30 @@ class CosmeticsPayload:
 
 
 @dataclass
+class IslandsPayload:
+    """Creative island catalog snapshot from Ecosystem API."""
+
+    islands: List[Dict[str, Any]]
+    captured_at: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class IslandMetricsPayload:
+    """Island engagement metrics snapshot from Ecosystem API."""
+
+    island_code: str
+    interval: str
+    metrics: Dict[str, Any]
+    captured_at: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class SourceHealthEvent:
     """Operational health signal for ingestion pipelines."""
 

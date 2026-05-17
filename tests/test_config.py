@@ -12,7 +12,10 @@ def test_settings_loads_required_fields() -> None:
     settings = load_settings(reload=True)
     assert settings.kafka_bootstrap_servers == "localhost:9092"
     assert settings.minio_profile == "internal"
-    assert settings.kafka_topic_ccu == "fortnite.raw.ccu"
+    assert settings.kafka_topic_shop == "fortnite.raw.shop"
+    assert settings.fortnite_api_base_url == "https://fortnite-api.com"
+    assert settings.fortnite_ecosystem_api_base_url == "https://api.fortnite.com/ecosystem/v1"
+    assert "peakCCU" in settings.fortnite_ecosystem_default_metrics
 
 
 def test_settings_missing_required(monkeypatch: pytest.MonkeyPatch) -> None:

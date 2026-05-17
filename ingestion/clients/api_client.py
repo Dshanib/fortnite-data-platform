@@ -66,5 +66,6 @@ class ApiClient:
     def _raise_for_status(response: Response) -> None:
         if response.status_code >= 400:
             raise ApiClientError(
-                f"HTTP {response.status_code} for {response.url}: {response.text[:200]}"
+                f"HTTP {response.status_code} for {response.url}: {response.text[:200]}",
+                status_code=response.status_code,
             )
