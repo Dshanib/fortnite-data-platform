@@ -86,6 +86,15 @@ python -m compileall .
 python -m pytest
 ```
 
+## CI
+
+On every **push** or **pull request** to `main` / `dev`, GitHub Actions runs:
+
+- `python -m compileall .`
+- `python -m pytest`
+
+Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml). No secrets required (tests use mocked env from `tests/conftest.py`).
+
 ## Troubleshooting
 
 - **Ecosystem 401/403:** configure Epic OAuth in `.env` (see `.env.example`)
