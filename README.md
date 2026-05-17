@@ -23,11 +23,9 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env`:
+Copy [`.env.example`](.env.example) to `.env` and add your **local** API keys and tokens there only.
 
-- `FORTNITE_API_KEY` — optional, for Fortnite-API.com
-- `FORTNITE_CLIENT_ID` / `FORTNITE_CLIENT_SECRET` — optional, for Ecosystem API OAuth
-- `TELEGRAM_BOT_TOKEN`, MinIO, Kafka settings
+Do **not** put secrets in this README or commit `.env` to git.
 
 ## Validate API connectivity
 
@@ -65,7 +63,7 @@ python -m ingestion.ingest_island_metrics
 
 ## Telegram bot
 
-Requires `TELEGRAM_BOT_TOKEN` in `.env`.
+Requires a bot token in `.env` (see `.env.example`).
 
 ```bash
 source scripts/env.sh
@@ -85,7 +83,7 @@ python -m pytest
 
 ## Troubleshooting
 
-- **Ecosystem 401/403:** set Epic OAuth credentials in `.env`
+- **Ecosystem 401/403:** configure Epic OAuth in `.env` (see `.env.example`)
 - **Ecosystem 429:** rate limited; retry later or reduce `FORTNITE_ECOSYSTEM_ISLAND_PAGE_SIZE`
 - **`python` permission denied:** use `source scripts/env.sh`
 
