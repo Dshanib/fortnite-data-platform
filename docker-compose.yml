@@ -1,5 +1,8 @@
 # Local Phase 1 infrastructure. Credentials come from .env only (never commit .env).
 # Usage: docker compose --env-file .env up -d
+#
+# Kafka only:  docker compose --env-file .env up -d zookeeper kafka
+# MinIO only:  docker compose --env-file .env up -d minio minio-init
 
 services:
   zookeeper:
@@ -10,6 +13,7 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
+      # Local dev: localhost:2181
       - "2181:2181"
 
   kafka:
@@ -19,19 +23,23 @@ services:
     depends_on:
       - zookeeper
     ports:
+      # Local dev: host clients use localhost:9092
       - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # PLAINTEXT_HOST advertises localhost:9092 for apps on the host machine.
+      # For LAN/external clients, change PLAINTEXT_HOST to your host IP, e.g.:
+      # KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://192.168.1.100:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
 
   minio:
-    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    image: minio/minio:latest
     container_name: fortnite-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -51,7 +59,7 @@ services:
       start_period: 10s
 
   minio-init:
-    image: minio/mc:RELEASE.2024-05-10T01-41-38Z
+    image: minio/mc:latest
     container_name: fortnite-minio-init
     depends_on:
       minio:
@@ -66,6 +74,16 @@ services:
       mc mb fortnite/$$MINIO_BUCKET --ignore-existing &&
       echo MinIO bucket ready
       "
+  kafdrop:
+    image: obsidiandynamics/kafdrop:3.30.0
+    container_name: fortnite-kafdrop
+    restart: unless-stopped
+    ports:
+      - "9003:9000"
+    environment:
+      KAFKA_BROKERCONNECT: kafka:29092
+    depends_on:
+      - kafka
 
 volumes:
   minio_data:

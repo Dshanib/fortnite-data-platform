@@ -1,8 +1,18 @@
+#!/usr/bin/env python3
 """MinIO connectivity and health check script."""
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from scripts._script_runtime import bootstrap, safe_print
+
+bootstrap()
 
 from common.logging import configure_logging, get_logger
 from config.settings import get_settings
@@ -18,7 +28,7 @@ def main() -> int:
     configure_logging(settings.log_level)
 
     if not check_minio_live(settings):
-        logger.error("MinIO liveness check failed url=%s", settings.minio_health_url)
+        safe_print(f"MinIO health check failed: {settings.minio_health_url}")
         return 1
 
     client = MinioStorageClient(settings)
@@ -26,7 +36,10 @@ def main() -> int:
         logger.warning("Bucket missing; attempting ensure_bucket profile=%s", settings.minio_profile)
         client.ensure_bucket()
 
-    logger.info("MinIO OK profile=%s endpoint=%s bucket=%s", settings.minio_profile, settings.minio_endpoint, settings.minio_bucket)
+    safe_print(
+        f"MinIO OK profile={settings.minio_profile} "
+        f"endpoint={settings.minio_endpoint} bucket={settings.minio_bucket}"
+    )
     return 0
 
 

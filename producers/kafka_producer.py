@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from kafka import KafkaProducer
-from kafka.errors import KafkaError
+from kafka.errors import KafkaError, NoBrokersAvailable
 
 from common.exceptions import KafkaProducerError
 from common.logging import get_logger
@@ -16,18 +16,27 @@ logger = get_logger(__name__)
 
 
 class FortniteKafkaProducer:
-    """JSON Kafka producer with structured logging."""
+    """JSON Kafka producer with structured logging (no hardcoded topics or brokers)."""
 
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self._settings = settings or get_settings()
         self._producer: Optional[KafkaProducer] = None
 
+    @property
+    def bootstrap_servers(self) -> List[str]:
+        """Return configured Kafka bootstrap servers."""
+        return [
+            server.strip()
+            for server in self._settings.kafka_bootstrap_servers.split(",")
+            if server.strip()
+        ]
+
     def _get_producer(self) -> KafkaProducer:
         if self._producer is None:
             self._producer = KafkaProducer(
-                bootstrap_servers=self._settings.kafka_bootstrap_servers.split(","),
-                value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
-                key_serializer=lambda k: k.encode("utf-8") if k else None,
+                bootstrap_servers=self.bootstrap_servers,
+                value_serializer=lambda value: json.dumps(value, default=str).encode("utf-8"),
+                key_serializer=lambda key: key.encode("utf-8") if key else None,
                 retries=3,
                 acks="all",
             )
@@ -40,11 +49,21 @@ class FortniteKafkaProducer:
         *,
         key: Optional[str] = None,
     ) -> None:
-        """Publish a JSON-serializable event to Kafka."""
+        """Publish a JSON-serializable event to the given topic."""
+        if not topic or not topic.strip():
+            raise KafkaProducerError("Kafka topic name is required")
         try:
             future = self._get_producer().send(topic, value=event, key=key)
             future.get(timeout=30)
-            logger.info("Published event to topic=%s key=%s", topic, key)
+            logger.info(
+                "Published event bootstrap=%s topic=%s key=%s",
+                self.bootstrap_servers,
+                topic,
+                key,
+            )
+        except NoBrokersAvailable as exc:
+            logger.error("Kafka broker unavailable bootstrap=%s", self.bootstrap_servers)
+            raise KafkaProducerError("Kafka broker unavailable") from exc
         except KafkaError as exc:
             logger.error("Kafka publish failed topic=%s: %s", topic, exc)
             raise KafkaProducerError(f"Failed to publish to {topic}") from exc
@@ -53,9 +72,11 @@ class FortniteKafkaProducer:
         """Flush pending producer messages."""
         if self._producer is not None:
             self._producer.flush()
+            logger.debug("Kafka producer flushed")
 
     def close(self) -> None:
         """Close the underlying producer."""
         if self._producer is not None:
             self._producer.close()
             self._producer = None
+            logger.debug("Kafka producer closed")

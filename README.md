@@ -34,28 +34,60 @@ python scripts/test_fortnite_api.py
 python scripts/test_fortnite_ecosystem_api.py
 ```
 
-## Docker (Kafka + MinIO)
+## Kafka
 
-Infra credentials (MinIO, etc.) are read from your **local `.env` only**. They are not listed in this README or in `docker-compose.yml`.
+Local defaults (see `.env.example`):
+
+- Zookeeper: `localhost:2181`
+- Kafka broker: `localhost:9092`
+
+### Start Kafka (Zookeeper + broker)
 
 ```bash
-cp .env.example .env   # if you have not already
-# Edit .env — set MINIO_ACCESS_KEY, MINIO_SECRET_KEY, and other secrets locally
+docker compose --env-file .env up -d zookeeper kafka
+```
 
-docker compose --env-file .env up -d
-python scripts/check_minio.py
+Wait ~30 seconds for Kafka to become ready.
+
+### Create topics (idempotent)
+
+```bash
+python scripts/create_kafka_topics.py
+```
+
+### Validate producer connectivity
+
+```bash
 python scripts/check_kafka.py
 ```
 
-## Kafka topics
+Sends one small JSON test event to `fortnite.ops.ingestion_status` and prints success/failure with a timestamp.
 
-| Topic | Producer |
-|-------|----------|
+### Kafka topics
+
+| Topic | Future producer |
+|-------|-----------------|
 | `fortnite.raw.shop` | `ingest_shop` |
 | `fortnite.raw.cosmetics` | `ingest_cosmetics` |
 | `fortnite.raw.islands` | `ingest_islands` |
 | `fortnite.raw.island_metrics` | `ingest_island_metrics` |
-| `fortnite.ops.ingestion_status` | all pipelines |
+| `fortnite.ops.ingestion_status` | health / connectivity |
+
+Ingestion pipelines are **not** wired to Kafka in this validation phase.
+
+For LAN/external clients, adjust `KAFKA_ADVERTISED_LISTENERS` in `docker-compose.yml` (see comments there).
+
+## Docker (MinIO + full stack)
+
+Infra credentials are read from your **local `.env` only** (not documented here).
+
+```bash
+docker compose --env-file .env up -d minio
+python scripts/check_minio.py
+python scripts/send_minio_test_data.py
+```
+
+`send_minio_test_data.py` writes one sample JSON object under each medallion prefix (`bronze/`, `silver/`, `gold/`) using paths like `{layer}/{entity}/{YYYY/MM/DD}/{file}.json`.
 
 ## Ingestion
 
@@ -100,6 +132,9 @@ Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml). No secrets req
 - **Ecosystem 401/403:** configure Epic OAuth in `.env` (see `.env.example`)
 - **Ecosystem 429:** rate limited; retry later or reduce `FORTNITE_ECOSYSTEM_ISLAND_PAGE_SIZE`
 - **`python` permission denied:** use `source scripts/env.sh`
+- **Unicode console errors (Windows):** scripts auto-configure UTF-8; or run  
+  `set PYTHONIOENCODING=utf-8` (cmd) / `$env:PYTHONIOENCODING='utf-8'` (PowerShell)
+- **Kafka connection refused:** start `zookeeper` and `kafka` via Docker Compose first
 
 ## Git
 
