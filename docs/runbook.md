@@ -3,7 +3,7 @@
 ## Startup order
 
 1. Copy env: `cp .env.example .env` and fill secrets
-2. Start infra: `docker compose up -d`
+2. Start infra: `docker compose --env-file .env up -d` (secrets in `.env` only)
 3. Init DuckDB: `python -m serving.duckdb_init`
 4. Health checks:
    - `python scripts/check_minio.py`

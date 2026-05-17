@@ -36,8 +36,13 @@ python scripts/test_fortnite_ecosystem_api.py
 
 ## Docker (Kafka + MinIO)
 
+Infra credentials (MinIO, etc.) are read from your **local `.env` only**. They are not listed in this README or in `docker-compose.yml`.
+
 ```bash
-docker compose up -d
+cp .env.example .env   # if you have not already
+# Edit .env — set MINIO_ACCESS_KEY, MINIO_SECRET_KEY, and other secrets locally
+
+docker compose --env-file .env up -d
 python scripts/check_minio.py
 python scripts/check_kafka.py
 ```
