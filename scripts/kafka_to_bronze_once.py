@@ -165,10 +165,14 @@ def main() -> int:
         safe_print("--max-messages must be at least 1")
         return 1
 
+    max_messages = args.max_messages
+    if args.full and max_messages == DEFAULT_MAX_MESSAGES:
+        max_messages = 500
+
     try:
         settings = get_settings()
         topics = _resolve_topics(settings, topic=args.topic, full=args.full)
-        return run(settings, topics=topics, max_messages=args.max_messages)
+        return run(settings, topics=topics, max_messages=max_messages)
     except StorageError as exc:
         safe_print(f"Kafka → Bronze: FAILED — {exc}")
         return 1

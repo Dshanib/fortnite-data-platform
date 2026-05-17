@@ -101,8 +101,6 @@ Bronze stores **raw Kafka event JSON** (full envelope + payload) with minimal tr
 
 `bronze/source=shop/event_date=YYYY-MM-DD/raw_shop_<timestamp>_<uuid>.json`
 
-Silver/Gold **Parquet** layers come later (Spark processing).
-
 ```bash
 # Default: up to 10 messages from fortnite.raw.shop
 python scripts/kafka_to_bronze_once.py
@@ -113,6 +111,41 @@ python scripts/kafka_to_bronze_once.py --full
 ```
 
 Run ingestion first so Kafka topics contain data. Console: http://localhost:9001
+
+**Important:** Ingestion writes to **Kafka only**. MinIO bronze is populated by `kafka_to_bronze_once.py` (not automatic). In the console, open `bronze/source=shop/` (not only `bronze/connectivity/` from the sample upload script).
+
+## Silver (PySpark batch: Bronze JSON → Parquet)
+
+### Prerequisites
+
+- **Java 17+** (`JAVA_HOME` set)
+- **PySpark** in the venv: `pip install -r requirements.txt`
+- Bronze JSON already in MinIO (ingestion + `kafka_to_bronze_once.py`)
+- Same MinIO variables as above (`MINIO_PROFILE`, `MINIO_ENDPOINT`, keys, bucket)
+
+First Spark run downloads Hadoop AWS jars (~100MB).
+
+### Run Bronze → Silver
+
+```bash
+# Recommended locally (fast, ~1 min): MinIO + PyArrow, no Spark JVM
+pip install pandas pyarrow
+python scripts/run_bronze_to_silver.py --engine python --sources shop,islands
+
+# Full Spark path (first run may take 5–10 min for JAR download)
+python scripts/run_bronze_to_silver.py --engine spark
+```
+
+Reads:
+
+| Bronze prefix | Silver output |
+|---------------|---------------|
+| `bronze/source=shop/` | `silver/shop_items/` (partitioned by `snapshot_date`) |
+| `bronze/source=cosmetics/` | `silver/cosmetics/` |
+| `bronze/source=islands/` | `silver/islands/` |
+| `bronze/source=island_metrics/` | `silver/island_metrics/` (partitioned by `metric_date`) |
+
+Batch job only (no Structured Streaming yet). Gold layer and Telegram integration come later.
 
 ## Ingestion
 
