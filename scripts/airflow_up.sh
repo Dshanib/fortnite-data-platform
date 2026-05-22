@@ -10,6 +10,7 @@ fi
 
 if ! grep -q '^AIRFLOW_FERNET_KEY=.\+' .env 2>/dev/null; then
   echo "Set AIRFLOW_FERNET_KEY in .env before starting Airflow"
+  echo "Generate: python scripts/generate_airflow_fernet_key.py"
   exit 1
 fi
 
