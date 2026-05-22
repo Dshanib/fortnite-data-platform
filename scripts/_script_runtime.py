@@ -8,7 +8,20 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent.parent
+
+def _resolve_project_root() -> Path:
+    """Project root for host CLI, Airflow container, or explicit override."""
+    override = (
+        os.getenv("FORTNITE_PROJECT_ROOT")
+        or os.getenv("AIRFLOW_PROJECT_ROOT")
+        or ""
+    ).strip()
+    if override:
+        return Path(override).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+ROOT = _resolve_project_root()
 
 _MINIMAL_ENV = {
     "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",

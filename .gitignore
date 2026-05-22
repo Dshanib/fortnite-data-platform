@@ -6,3 +6,5 @@ __pycache__/
 .cursor_test.tmp
 data/
 *.duckdb
+logs/
+!logs/.gitkeep

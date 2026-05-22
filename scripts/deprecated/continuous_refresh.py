@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Repeat ingestion and lakehouse refresh (does not start the Telegram bot)."""
+"""
+Deprecated: replaced by Airflow DAG orchestration.
+
+Kept for fallback/local debugging when Airflow is not running.
+Primary schedulers:
+  - fortnite_metrics_refresh_dag (every 5 minutes)
+  - fortnite_shop_refresh_dag (every 60 minutes)
+  - fortnite_reference_refresh_dag (daily)
+
+See docs/airflow_orchestration.md.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
@@ -93,43 +103,23 @@ def run_cycle(
 
 
 def main() -> int:
+    safe_print(
+        "WARNING: scripts/deprecated/continuous_refresh.py is deprecated. "
+        "Use Airflow DAGs (see docs/airflow_orchestration.md)."
+    )
     parser = argparse.ArgumentParser(
-        description="Continuously refresh ingestion, bronze, silver, gold, and serving checks.",
+        description="[DEPRECATED] Continuously refresh ingestion and lakehouse layers.",
     )
-    parser.add_argument(
-        "--interval-seconds",
-        type=int,
-        default=300,
-        help="Seconds between refresh cycles (default: 300)",
-    )
+    parser.add_argument("--interval-seconds", type=int, default=300)
     parser.add_argument(
         "--serving-mode",
         choices=("direct_minio", "local_cache"),
         default="direct_minio",
-        help="DuckDB Gold read mode for serving check",
     )
-    parser.add_argument(
-        "--max-messages-per-topic",
-        type=int,
-        default=20,
-        help="Max Kafka messages per topic per cycle (default: 20)",
-    )
-    parser.add_argument(
-        "--skip-ingestion",
-        action="store_true",
-        help="Skip API ingestion in each cycle",
-    )
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Run a single cycle then exit",
-    )
-    parser.add_argument(
-        "--max-islands",
-        type=int,
-        default=50,
-        help="Max islands for metrics ingestion per cycle (default: 50; 0 = all)",
-    )
+    parser.add_argument("--max-messages-per-topic", type=int, default=20)
+    parser.add_argument("--skip-ingestion", action="store_true")
+    parser.add_argument("--once", action="store_true")
+    parser.add_argument("--max-islands", type=int, default=50)
     args = parser.parse_args()
 
     if args.interval_seconds < 1:
@@ -139,12 +129,6 @@ def main() -> int:
     signal.signal(signal.SIGINT, _handle_sigint)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _handle_sigint)
-
-    safe_print(
-        f"Continuous refresh started (interval={args.interval_seconds}s, "
-        f"serving={args.serving_mode}). Press Ctrl+C to stop."
-    )
-    safe_print("Bot is not started here. Run separately: python -m bot.app")
 
     max_islands = args.max_islands if args.max_islands > 0 else None
 

@@ -1,5 +1,7 @@
 # Continuous parallel execution plan
 
+> **Update:** Scheduled refreshes are now handled by **Apache Airflow**. See [airflow_orchestration.md](airflow_orchestration.md). The sections below describe the logical process model; `scripts/continuous_refresh.py` was deprecated in favor of Airflow DAGs.
+
 This project keeps the **Telegram bot** (read-only serving) separate from **background data refresh** workers. The bot never writes to MinIO or Kafka; it only queries curated Gold data through DuckDB.
 
 ## Runtime model
@@ -35,16 +37,15 @@ flowchart LR
 - DuckDB reads the latest Gold Parquet from MinIO (`direct_minio`) or from a local cache (`local_cache`).
 - **Does not** run ingestion or Spark jobs.
 
-### Process B — Ingestion scheduler
+### Process B — Ingestion scheduler (Airflow)
 
-Periodically calls APIs and publishes envelopes to Kafka.
+Airflow DAGs call existing ingestion modules on schedule:
 
-| Source | Suggested interval |
-|--------|-------------------|
-| Island metrics | Every 5 minutes |
-| Shop | Every 30–60 minutes |
-| Islands | Every 30–60 minutes |
-| Cosmetics | Once daily |
+| DAG | Schedule |
+|-----|----------|
+| `fortnite_metrics_refresh_dag` | Every 5 minutes |
+| `fortnite_shop_refresh_dag` | Every 60 minutes |
+| `fortnite_reference_refresh_dag` | Daily |
 
 Example one-shot ingestion:
 
@@ -97,13 +98,15 @@ Confirms DuckDB views and `QueryService` queries against current Gold data.
 docker compose up -d
 ```
 
-**Terminal 2 — continuous refresh (optional)**
+**Airflow — scheduled refresh**
 
 ```bash
-python scripts/continuous_refresh.py --interval-seconds 300 --serving-mode direct_minio
+docker compose --env-file .env up -d airflow-postgres airflow-init airflow-webserver airflow-scheduler
 ```
 
-**Terminal 3 — Telegram bot**
+Open http://localhost:8080 and enable the refresh DAGs.
+
+**Terminal 2 — Telegram bot**
 
 ```bash
 python -m bot.app
@@ -115,26 +118,10 @@ python -m bot.app
 python scripts/demo_run.py --serving-mode direct_minio
 ```
 
-## Lightweight scheduler alternatives
+## Fallback (no Airflow)
 
-- **`scripts/continuous_refresh.py`** — built-in loop with configurable interval (default 300s).
-- **PowerShell loop (Windows):**
-
-```powershell
-while ($true) {
-  python scripts/demo_run.py --serving-mode direct_minio --skip-ingestion
-  Start-Sleep -Seconds 300
-}
-```
-
-- **Bash loop:**
-
-```bash
-while true; do
-  python scripts/continuous_refresh.py --once --serving-mode direct_minio
-  sleep 300
-done
-```
+- **`scripts/deprecated/continuous_refresh.py`** — legacy loop for local debugging only.
+- **Manual:** `python scripts/demo_run.py --serving-mode direct_minio`
 
 ## Data freshness
 
@@ -147,13 +134,9 @@ done
 
 After a refresh cycle completes, restart is **not** required for the bot: new Gold files in MinIO are visible on the next DuckDB read.
 
-## Future orchestration
-
-For production-grade scheduling, replace `continuous_refresh.py` with **Apache Airflow**, **Prefect**, or similar. This repo intentionally avoids Airflow in Phase 1.
-
 ## Limitations
 
-- `continuous_refresh.py` is a dev/demo helper, not a production scheduler.
+- Airflow LocalExecutor runs tasks in the scheduler container — heavy jobs share one machine.
 - Respect Fortnite API rate limits; full island metrics can take minutes.
 - Many islands return **null** `peakCCU` — fewer top islands and anomalies.
 - Anomaly detection needs **multiple metric points per island** in silver; single-point history produces no anomalies.

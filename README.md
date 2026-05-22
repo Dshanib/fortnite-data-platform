@@ -228,59 +228,102 @@ python scripts/run_all_ingestion_once.py
 
 Cosmetics are published in **chunks** (`FORTNITE_COSMETICS_KAFKA_CHUNK_SIZE`, default `400`) so each Kafka message stays under broker size limits. Each chunk payload includes `ingestion_batch` metadata for reassembly downstream.
 
-## Demo and continuous refresh
+## Airflow orchestration (scheduled refresh)
 
-### One-shot demo run
+Airflow runs existing scripts on a schedule (orchestration only — no duplicated pipeline logic).
 
-Validates MinIO/Kafka, ingests APIs, writes bronze/silver/gold, and checks DuckDB serving:
+See [docs/airflow_orchestration.md](docs/airflow_orchestration.md).
 
-```bash
-python scripts/demo_run.py --serving-mode direct_minio
-```
+### Start stack (infra + Airflow)
 
-Flags: `--skip-ingestion`, `--skip-kafka-to-bronze`, `--skip-spark`, `--max-messages-per-topic 20`, `--serving-mode local_cache`.
-
-Does **not** start the bot; at the end it prints `python -m bot.app`.
-
-See [docs/continuous_execution_plan.md](docs/continuous_execution_plan.md) for the multi-process runtime model.
-
-### Continuous mode (3 terminals)
-
-**Terminal 1 — infrastructure**
+Core only (no Airflow pull/build):
 
 ```bash
-docker compose up -d
+docker compose --env-file .env up -d
 ```
 
-**Terminal 2 — background refresh**
+Airflow (uses local **postgres:13** image; requires `AIRFLOW_FERNET_KEY` in `.env`):
 
 ```bash
-python scripts/continuous_refresh.py --interval-seconds 300 --serving-mode direct_minio
+docker compose --env-file .env --profile airflow up -d --build
 ```
 
-**Terminal 3 — Telegram bot**
+Or use the helper script:
+
+```bash
+bash scripts/airflow_up.sh
+```
+
+After `airflow-init` completes, open **http://localhost:8080** (default login `admin` / `admin`).
+
+On Windows, set `AIRFLOW_UID=0` in `.env` if log folders fail to mount.
+
+Set in `.env` before first Airflow start:
+
+```bash
+AIRFLOW_FERNET_KEY=<generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">
+```
+
+Optional tuning:
+
+```bash
+FORTNITE_MAX_ISLANDS=50
+FORTNITE_SERVING_MODE=direct_minio
+FORTNITE_MAX_MESSAGES_PER_TOPIC=20
+```
+
+### DAGs
+
+| DAG | Schedule |
+|-----|----------|
+| `fortnite_full_demo_dag` | Manual trigger |
+| `fortnite_metrics_refresh_dag` | Every 5 minutes |
+| `fortnite_shop_refresh_dag` | Every 60 minutes |
+| `fortnite_reference_refresh_dag` | Daily |
+
+Unpause DAGs in the UI, then trigger **`fortnite_full_demo_dag`** for a full demo run.
+
+### Recommended runtime
+
+**Terminal 1 — Docker**
+
+```bash
+docker compose --env-file .env up -d
+```
+
+**Terminal 2 — Telegram bot**
 
 ```bash
 python -m bot.app
 ```
 
+Airflow handles scheduled ingestion and lakehouse refreshes.
+
+## Manual one-shot demo
+
+Without Airflow, run the full pipeline once:
+
+```bash
+python scripts/demo_run.py --serving-mode direct_minio
+```
+
+Flags: `--skip-ingestion`, `--skip-kafka-to-bronze`, `--skip-spark`, `--max-messages-per-topic 20`, `--max-islands 50`.
+
+Does **not** start the bot; prints `python -m bot.app` at the end.
+
+Legacy loop (deprecated): `python scripts/deprecated/continuous_refresh.py`
+
 ### Data freshness
 
-- **Ingestion** pulls latest API data into Kafka.
-- **Kafka** buffers events until the bronze worker drains them.
-- **Bronze** stores raw JSON in MinIO.
-- **Spark/Python batch jobs** update Silver and Gold (including `island_activity_anomalies`).
-- **DuckDB** reads the latest Gold Parquet (`direct_minio` or synced `local_cache`).
-- The **Telegram bot** only queries the serving layer (`QueryService`); it does not update the lake.
-
-After `continuous_refresh.py` completes a cycle, the bot sees new Gold data on the next query without restart.
+- **Airflow** (or `demo_run.py`) refreshes APIs → Kafka → Bronze → Silver → Gold.
+- **DuckDB** reads latest Gold from MinIO (`direct_minio`).
+- The **bot** only queries `QueryService`; new Gold is visible on the next query after a refresh.
 
 ### Limitations
 
-- `continuous_refresh.py` is for local demo, not a production scheduler.
-- **Airflow** / **Prefect** can replace the refresh loop later.
-- Respect API rate limits; full island metrics may take several minutes.
-- Low-activity islands often have **null** `peakCCU`, so top-island and anomaly lists may be short.
+- Scheduled tasks use `--engine python` inside Airflow (not Spark JVM in the container).
+- Respect API rate limits; metrics ingestion may take several minutes.
+- Low-activity islands often have **null** `peakCCU`.
 
 ## Telegram bot
 
