@@ -55,6 +55,8 @@ class Settings:
 
     telegram_bot_token: str
     duckdb_path: str
+    gold_data_root: str
+    duckdb_gold_read_mode: str
 
     fortnite_api_base_url: str
     fortnite_api_key: str
@@ -119,6 +121,8 @@ def get_settings() -> Settings:
         minio_secure=parse_bool(os.getenv("MINIO_SECURE"), default=False),
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         duckdb_path=_optional("DUCKDB_PATH", str(_PROJECT_ROOT / "data" / "serving.duckdb")),
+        gold_data_root=_optional("GOLD_DATA_ROOT", str(_PROJECT_ROOT / "data" / "gold")),
+        duckdb_gold_read_mode=_optional("DUCKDB_GOLD_READ_MODE", "direct_minio").lower(),
         fortnite_api_base_url=_optional("FORTNITE_API_BASE_URL", "https://fortnite-api.com"),
         fortnite_api_key=_optional("FORTNITE_API_KEY", ""),
         fortnite_cosmetics_kafka_chunk_size=int(

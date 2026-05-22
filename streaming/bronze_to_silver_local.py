@@ -13,6 +13,10 @@ from minio import Minio
 
 from common.logging import configure_logging, get_logger
 from config.settings import Settings, get_settings
+from storage.parquet_names import (
+    dataset_parquet_filename,
+    dataset_partition_basename_template,
+)
 from streaming.job_bronze_to_silver import DatasetResult
 from streaming.transformations import (
     transform_cosmetics_events,
@@ -123,11 +127,19 @@ def process_dataset_local(
     _clear_prefix(client, bucket, output_prefix)
     with tempfile.TemporaryDirectory() as tmp:
         if partition_by:
-            frame.to_parquet(tmp, engine="pyarrow", index=False, partition_cols=partition_by)
+            frame.to_parquet(
+                tmp,
+                engine="pyarrow",
+                index=False,
+                partition_cols=partition_by,
+                basename_template=dataset_partition_basename_template(silver_dataset),
+            )
         else:
             os.makedirs(tmp, exist_ok=True)
             frame.to_parquet(
-                os.path.join(tmp, "data.parquet"), engine="pyarrow", index=False
+                os.path.join(tmp, dataset_parquet_filename(silver_dataset)),
+                engine="pyarrow",
+                index=False,
             )
         files_uploaded = _upload_tree(client, bucket, tmp, output_prefix)
 

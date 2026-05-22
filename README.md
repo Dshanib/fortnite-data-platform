@@ -145,7 +145,72 @@ Reads:
 | `bronze/source=islands/` | `silver/islands/` |
 | `bronze/source=island_metrics/` | `silver/island_metrics/` (partitioned by `metric_date`) |
 
-Batch job only (no Structured Streaming yet). Gold layer and Telegram integration come later.
+Batch job only (no Structured Streaming yet).
+
+## Gold (Silver Parquet → analytical Parquet)
+
+Builds six gold datasets for analytics and the Telegram bot. Requires **silver** Parquet in MinIO; Kafka is not needed.
+
+```bash
+# Fast local path (recommended)
+python scripts/run_silver_to_gold.py --engine python
+
+# PySpark S3A path
+python scripts/run_silver_to_gold.py --engine spark
+```
+
+| Gold dataset | Meaning |
+|--------------|---------|
+| `gold/current_island_activity` | Latest peak CCU, players, plays, minutes per island |
+| `gold/top_islands_by_peak_ccu` | Islands ranked by peak CCU |
+| `gold/island_metric_hourly` | Hourly avg/min/max per island metric |
+| `gold/island_activity_anomalies` | peakCCU spikes vs rolling average / previous point |
+| `gold/shop_rarity_distribution` | Item shop composition by cosmetic rarity (latest snapshot) |
+| `gold/source_health_summary` | Ingestion success/failure counts from bronze health events |
+
+Optional: `FORTNITE_GOLD_TOP_ISLANDS_N=10` limits the ranking table.
+
+## DuckDB serving (Gold → queries)
+
+DuckDB is the **serving/query layer** — not the storage layer. Gold Parquet stays in MinIO.
+
+**Modes** (`DUCKDB_GOLD_READ_MODE`):
+
+| Mode | Behavior |
+|------|----------|
+| `direct_minio` (default) | DuckDB `httpfs` reads `s3://<bucket>/gold/<dataset>/**/*.parquet` from MinIO |
+| `local_cache` | Sync Gold to `GOLD_DATA_ROOT`, then read local Parquet (fallback if direct fails) |
+
+```
+MinIO gold/*.parquet  →  DuckDB views (direct_minio or local_cache)  →  QueryService  →  bot
+```
+
+### Configure
+
+| Variable | Purpose |
+|----------|---------|
+| `DUCKDB_PATH` | Embedded DuckDB file (default `data/serving.duckdb`) |
+| `DUCKDB_GOLD_READ_MODE` | `direct_minio` or `local_cache` |
+| `GOLD_DATA_ROOT` | Local cache for `local_cache` mode (default `data/gold`) |
+| `MINIO_*` | Used by `direct_minio` for S3-compatible access |
+| `GOLD_*_PATH` | Optional per-dataset path/glob override |
+
+### Initialize views and run checks
+
+```bash
+# Read Gold directly from MinIO (no local sync)
+python scripts/check_duckdb_serving.py --mode direct_minio
+
+# Local cache: sync from MinIO then query
+python scripts/check_duckdb_serving.py --mode local_cache
+
+# Local cache without re-download
+python scripts/check_duckdb_serving.py --mode local_cache --skip-sync
+```
+
+Views: `vw_current_island_activity`, `vw_top_islands_by_peak_ccu`, `vw_island_metric_hourly`, `vw_island_activity_anomalies`, `vw_shop_rarity_distribution`, `vw_source_health_summary`.
+
+`QueryService` returns `status` (`ok` / `no_data` / `error`), `message`, and `data` — never crashes on missing Gold data.
 
 ## Ingestion
 
@@ -163,18 +228,83 @@ python scripts/run_all_ingestion_once.py
 
 Cosmetics are published in **chunks** (`FORTNITE_COSMETICS_KAFKA_CHUNK_SIZE`, default `400`) so each Kafka message stays under broker size limits. Each chunk payload includes `ingestion_batch` metadata for reassembly downstream.
 
-## Telegram bot
+## Demo and continuous refresh
 
-Requires a bot token in `.env` (see `.env.example`).
+### One-shot demo run
+
+Validates MinIO/Kafka, ingests APIs, writes bronze/silver/gold, and checks DuckDB serving:
 
 ```bash
-source scripts/env.sh
+python scripts/demo_run.py --serving-mode direct_minio
+```
+
+Flags: `--skip-ingestion`, `--skip-kafka-to-bronze`, `--skip-spark`, `--max-messages-per-topic 20`, `--serving-mode local_cache`.
+
+Does **not** start the bot; at the end it prints `python -m bot.app`.
+
+See [docs/continuous_execution_plan.md](docs/continuous_execution_plan.md) for the multi-process runtime model.
+
+### Continuous mode (3 terminals)
+
+**Terminal 1 — infrastructure**
+
+```bash
+docker compose up -d
+```
+
+**Terminal 2 — background refresh**
+
+```bash
+python scripts/continuous_refresh.py --interval-seconds 300 --serving-mode direct_minio
+```
+
+**Terminal 3 — Telegram bot**
+
+```bash
 python -m bot.app
 ```
 
-Example queries: `current ccu`, `average today`, `shop`, `health`. Bot uses mock `query_service` until DuckDB is wired.
+### Data freshness
 
-**Future bot intents (documented):** per-island peak CCU, top islands by plays — not implemented yet.
+- **Ingestion** pulls latest API data into Kafka.
+- **Kafka** buffers events until the bronze worker drains them.
+- **Bronze** stores raw JSON in MinIO.
+- **Spark/Python batch jobs** update Silver and Gold (including `island_activity_anomalies`).
+- **DuckDB** reads the latest Gold Parquet (`direct_minio` or synced `local_cache`).
+- The **Telegram bot** only queries the serving layer (`QueryService`); it does not update the lake.
+
+After `continuous_refresh.py` completes a cycle, the bot sees new Gold data on the next query without restart.
+
+### Limitations
+
+- `continuous_refresh.py` is for local demo, not a production scheduler.
+- **Airflow** / **Prefect** can replace the refresh loop later.
+- Respect API rate limits; full island metrics may take several minutes.
+- Low-activity islands often have **null** `peakCCU`, so top-island and anomaly lists may be short.
+
+## Telegram bot
+
+Requires a bot token in `.env`. Data is served via **QueryService** over DuckDB Gold views (MinIO or local cache).
+
+```bash
+source scripts/env.sh
+python scripts/check_duckdb_serving.py --mode direct_minio
+python -m bot.app
+```
+
+### Menu (primary UX — Hebrew)
+
+| Command / action | Query |
+|------------------|-------|
+| `/start`, `/menu` | תפריט ראשי בעברית |
+| **📊 כמה שחקנים מחוברים?** | `get_current_ccu()` |
+| **🏆 האיים הכי פופולריים** | `get_top_islands(10)` |
+| **🛒 מה יש בחנות היום?** | `get_shop_rarity_distribution()` |
+| **⚠️ חריגות פעילות** | `get_recent_anomalies(10)` |
+| **💬 עזרה ומדריך** | מדריך שימוש |
+| **🏠 חזרה לתפריט** | חזרה מהתוצאה |
+
+Free-text works in Hebrew or English (`פעילות`, `חנות`, `איים`, `חריגות`, `ccu`).
 
 ## Tests
 

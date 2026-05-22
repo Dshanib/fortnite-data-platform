@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Repeat ingestion and lakehouse refresh (does not start the Telegram bot)."""
+
+from __future__ import annotations
+
+import argparse
+import signal
+import sys
+import time
+
+from scripts._script_runtime import bootstrap, safe_print
+
+bootstrap()
+
+from scripts.pipeline_runner import (
+    StepFailed,
+    kafka_topics_from_settings,
+    run_module,
+    run_python_script,
+)
+
+_stop = False
+
+
+def _handle_sigint(_signum: int, _frame: object) -> None:
+    global _stop
+    _stop = True
+    safe_print("\nShutdown requested — finishing after current step...")
+
+
+def run_cycle(
+    *,
+    max_messages: int,
+    serving_mode: str,
+    skip_ingestion: bool,
+) -> bool:
+    """Run one refresh cycle. Returns False if a critical step failed."""
+    cycle_start = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    safe_print(f"\n{'=' * 60}\nRefresh cycle @ {cycle_start}\n{'=' * 60}")
+
+    try:
+        if not skip_ingestion:
+            run_module("ingestion.ingest_shop", critical=False)
+            run_module("ingestion.ingest_cosmetics", critical=False)
+            run_module("ingestion.ingest_islands", critical=False)
+            run_module("ingestion.ingest_island_metrics", critical=False)
+        else:
+            safe_print("[skip] ingestion")
+
+        for topic in kafka_topics_from_settings():
+            run_python_script(
+                "kafka_to_bronze_once.py",
+                "--topic",
+                topic,
+                "--max-messages",
+                str(max_messages),
+                critical=False,
+            )
+
+        run_python_script(
+            "run_bronze_to_silver.py",
+            "--engine",
+            "python",
+            critical=False,
+        )
+        run_python_script(
+            "run_silver_to_gold.py",
+            "--engine",
+            "python",
+            critical=False,
+        )
+
+        duck_args = ["--mode", serving_mode]
+        run_python_script(
+            "check_duckdb_serving.py",
+            *duck_args,
+            env={"DUCKDB_GOLD_READ_MODE": serving_mode},
+            critical=False,
+        )
+        return True
+    except StepFailed as exc:
+        safe_print(f"Cycle warning: {exc}")
+        return False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Continuously refresh ingestion, bronze, silver, gold, and serving checks.",
+    )
+    parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=300,
+        help="Seconds between refresh cycles (default: 300)",
+    )
+    parser.add_argument(
+        "--serving-mode",
+        choices=("direct_minio", "local_cache"),
+        default="direct_minio",
+        help="DuckDB Gold read mode for serving check",
+    )
+    parser.add_argument(
+        "--max-messages-per-topic",
+        type=int,
+        default=20,
+        help="Max Kafka messages per topic per cycle (default: 20)",
+    )
+    parser.add_argument(
+        "--skip-ingestion",
+        action="store_true",
+        help="Skip API ingestion in each cycle",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single cycle then exit",
+    )
+    args = parser.parse_args()
+
+    if args.interval_seconds < 1:
+        safe_print("--interval-seconds must be at least 1")
+        return 1
+
+    signal.signal(signal.SIGINT, _handle_sigint)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _handle_sigint)
+
+    safe_print(
+        f"Continuous refresh started (interval={args.interval_seconds}s, "
+        f"serving={args.serving_mode}). Press Ctrl+C to stop."
+    )
+    safe_print("Bot is not started here. Run separately: python -m bot.app")
+
+    while not _stop:
+        run_cycle(
+            max_messages=args.max_messages_per_topic,
+            serving_mode=args.serving_mode,
+            skip_ingestion=args.skip_ingestion,
+        )
+        if args.once:
+            break
+        if _stop:
+            break
+        safe_print(f"\nSleeping {args.interval_seconds}s until next cycle...")
+        for _ in range(args.interval_seconds):
+            if _stop:
+                break
+            time.sleep(1)
+
+    safe_print("\nContinuous refresh stopped.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

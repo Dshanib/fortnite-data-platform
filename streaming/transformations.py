@@ -236,6 +236,8 @@ def _island_code_from_event(event: Dict[str, Any], payload: Dict[str, Any]) -> O
 
 def _metric_points(metric_body: Any) -> List[Dict[str, Any]]:
     """Extract timestamp/value points from a metric API fragment."""
+    if isinstance(metric_body, list):
+        return [p for p in metric_body if isinstance(p, dict)]
     if not isinstance(metric_body, dict):
         return []
 

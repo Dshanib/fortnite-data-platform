@@ -140,6 +140,7 @@ class QueryResponse:
     success: bool
     data: Optional[Any] = None
     message: str = ""
+    status: str = "ok"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

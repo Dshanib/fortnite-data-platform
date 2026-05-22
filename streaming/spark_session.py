@@ -41,6 +41,11 @@ def silver_path(settings: Settings, dataset: str) -> str:
     return f"s3a://{settings.minio_bucket}/silver/{dataset}/"
 
 
+def gold_path(settings: Settings, dataset: str) -> str:
+    """S3A URI for a gold dataset prefix."""
+    return f"s3a://{settings.minio_bucket}/gold/{dataset}/"
+
+
 def build_spark_session(
     settings: Optional[Settings] = None,
     *,

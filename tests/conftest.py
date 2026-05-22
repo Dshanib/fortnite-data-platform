@@ -26,6 +26,8 @@ def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         "MINIO_SECURE": "false",
         "TELEGRAM_BOT_TOKEN": "test-token",
         "DUCKDB_PATH": str(tmp_path / "test.duckdb"),
+        "GOLD_DATA_ROOT": str(tmp_path / "gold"),
+        "DUCKDB_GOLD_READ_MODE": "local_cache",
         "FORTNITE_API_BASE_URL": "https://fortnite-api.com",
         "FORTNITE_API_KEY": "",
         "FORTNITE_COSMETICS_KAFKA_CHUNK_SIZE": "400",
