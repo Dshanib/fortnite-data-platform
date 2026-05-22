@@ -6,7 +6,12 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from scripts._script_runtime import bootstrap, safe_print
 
@@ -39,7 +44,7 @@ def _step_banner(title: str) -> None:
     safe_print("=" * 60)
 
 
-def _run_ingestion(summary: DemoSummary) -> None:
+def _run_ingestion(summary: DemoSummary, *, max_islands: int | None) -> None:
     _step_banner("Step 3 — API ingestion (once)")
     for name, module in (
         ("shop", "ingestion.ingest_shop"),
@@ -50,8 +55,12 @@ def _run_ingestion(summary: DemoSummary) -> None:
         if code == 0:
             summary.sources_refreshed.append(name)
 
-    safe_print("\n--- island_metrics (all islands) ---")
-    code = run_module("ingestion.ingest_island_metrics", critical=True)
+    safe_print("\n--- island_metrics ---")
+    metrics_args: list[str] = []
+    if max_islands is not None and max_islands > 0:
+        metrics_args = ["--max-islands", str(max_islands)]
+        safe_print(f"Limiting island metrics to {max_islands} islands")
+    code = run_module("ingestion.ingest_island_metrics", *metrics_args, critical=True)
     if code == 0:
         summary.sources_refreshed.append("island_metrics")
 
@@ -101,6 +110,12 @@ def main() -> int:
         default=20,
         help="Max Kafka messages per topic for bronze write (default: 20)",
     )
+    parser.add_argument(
+        "--max-islands",
+        type=int,
+        default=100,
+        help="Max islands for metrics ingestion (default: 100; use 0 for all)",
+    )
     args = parser.parse_args()
 
     if args.max_messages_per_topic < 1:
@@ -113,11 +128,15 @@ def main() -> int:
         _step_banner("Step 1 — Validate MinIO")
         run_python_script("check_minio.py", critical=True)
 
+        _step_banner("Step 1b — Ensure Kafka topics")
+        run_python_script("create_kafka_topics.py", critical=True)
+
         _step_banner("Step 2 — Validate Kafka")
         run_python_script("check_kafka.py", critical=True)
 
+        max_islands = args.max_islands if args.max_islands > 0 else None
         if not args.skip_ingestion:
-            _run_ingestion(summary)
+            _run_ingestion(summary, max_islands=max_islands)
         else:
             safe_print("\n[skip] API ingestion")
 

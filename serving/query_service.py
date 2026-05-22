@@ -152,18 +152,47 @@ class QueryService:
         )
 
     def get_avg_today(self) -> QueryResponse:
-        """Average peak CCU from hourly gold metrics for today (UTC)."""
+        """Average peak CCU for UTC today, or latest available date if today is empty."""
         return self._run_query(
             "get_avg_today",
             """
-            SELECT
-                AVG(avg_value) AS avg_peak_ccu,
-                COUNT(*) AS hourly_buckets,
-                CAST(MAX(metric_hour) AS VARCHAR) AS latest_hour
-            FROM vw_island_metric_hourly
-            WHERE metric_name = 'peakCCU'
-              AND TRY_CAST(metric_hour AS DATE) = CURRENT_DATE
-            HAVING COUNT(*) > 0
+            WITH peak AS (
+                SELECT metric_hour, avg_value
+                FROM vw_island_metric_hourly
+                WHERE metric_name = 'peakCCU'
+            ),
+            today AS (
+                SELECT
+                    AVG(avg_value) AS avg_peak_ccu,
+                    COUNT(*) AS hourly_buckets,
+                    CAST(MAX(metric_hour) AS VARCHAR) AS latest_hour,
+                    'today' AS period_label
+                FROM peak
+                WHERE TRY_CAST(metric_hour AS DATE) = CURRENT_DATE
+                HAVING COUNT(*) > 0
+            ),
+            latest_day AS (
+                SELECT MAX(TRY_CAST(metric_hour AS DATE)) AS metric_date
+                FROM peak
+            ),
+            fallback AS (
+                SELECT
+                    AVG(p.avg_value) AS avg_peak_ccu,
+                    COUNT(*) AS hourly_buckets,
+                    CAST(MAX(p.metric_hour) AS VARCHAR) AS latest_hour,
+                    'latest_available' AS period_label
+                FROM peak AS p
+                CROSS JOIN latest_day AS ld
+                WHERE TRY_CAST(p.metric_hour AS DATE) = ld.metric_date
+                HAVING COUNT(*) > 0
+            )
+            SELECT avg_peak_ccu, hourly_buckets, latest_hour, period_label
+            FROM today
+            UNION ALL
+            SELECT avg_peak_ccu, hourly_buckets, latest_hour, period_label
+            FROM fallback
+            WHERE NOT EXISTS (SELECT 1 FROM today)
+            LIMIT 1
             """,
             required_view="vw_island_metric_hourly",
         )

@@ -95,10 +95,13 @@ def build_current_island_activity(
             result[col] = None
 
     if islands is not None and not islands.empty and "island_code" in islands.columns:
-        meta = islands.drop_duplicates(subset=["island_code"])[
-            ["island_code", "title", "creator_code"]
-        ]
-        result = result.merge(meta, on="island_code", how="left")
+        meta = islands.drop_duplicates(subset=["island_code"]).copy()
+        if "title" in meta.columns and "display_name" in meta.columns:
+            meta["title"] = meta["title"].fillna(meta["display_name"])
+        elif "display_name" in meta.columns and "title" not in meta.columns:
+            meta["title"] = meta["display_name"]
+        cols = [c for c in ("island_code", "title", "creator_code") if c in meta.columns]
+        result = result.merge(meta[cols], on="island_code", how="left")
     else:
         if islands is None or islands.empty:
             logger.warning("Islands silver missing; gold activity without title/creator")
@@ -192,8 +195,12 @@ def build_island_activity_anomalies(
     title_map: Dict[str, Optional[str]] = {}
     if islands is not None and not islands.empty and "island_code" in islands.columns:
         meta = islands.drop_duplicates(subset=["island_code"])
-        if "title" in meta.columns:
-            title_map = dict(zip(meta["island_code"], meta["title"]))
+        for _, row in meta.iterrows():
+            code = str(row["island_code"])
+            title = row.get("title") if "title" in meta.columns else None
+            if title is None or (isinstance(title, float) and pd.isna(title)):
+                title = row.get("display_name") if "display_name" in meta.columns else None
+            title_map[code] = None if title is None or (isinstance(title, float) and pd.isna(title)) else str(title)
 
     detected_at = _utc_now()
     rows: List[Dict[str, Any]] = []

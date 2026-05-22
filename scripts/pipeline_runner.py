@@ -60,11 +60,11 @@ def run_python_script(
 
 def run_module(
     module: str,
-    *args: str,
+    *cli_args: str,
     critical: bool = True,
 ) -> int:
     """Run python -m <module> from project root."""
-    cmd: List[str] = [sys.executable, "-m", module, *args]
+    cmd: List[str] = [sys.executable, "-m", module, *cli_args]
     safe_print(f"\n>>> {' '.join(cmd)}")
     completed = subprocess.run(cmd, cwd=str(ROOT), check=False)
     if completed.returncode != 0 and critical:

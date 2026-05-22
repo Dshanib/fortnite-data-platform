@@ -39,6 +39,8 @@ class FortniteKafkaProducer:
                 key_serializer=lambda key: key.encode("utf-8") if key else None,
                 retries=3,
                 acks="all",
+                request_timeout_ms=30_000,
+                max_block_ms=30_000,
             )
         return self._producer
 

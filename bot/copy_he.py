@@ -108,6 +108,10 @@ STATUS_LABELS = {
     "failure": "כשל ❌",
 }
 
-ANOMALY_BODY = "לא זוהו חריגות אחרונות בנתוני Gold."
+ANOMALY_BODY = (
+    "לא זוהתה פעילות חריגה כרגע. "
+    "נדרשת היסטוריית מדדים נוספת כדי לזהות חריגות."
+)
+TOP_ISLANDS_FEW = "רק מעט איים עם נתוני שיא זמינים כרגע."
 ANOMALY_SEVERITY_HIGH = "גבוהה"
 ANOMALY_SEVERITY_MEDIUM = "בינונית"

@@ -7,6 +7,11 @@ import argparse
 import signal
 import sys
 import time
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from scripts._script_runtime import bootstrap, safe_print
 
@@ -33,6 +38,7 @@ def run_cycle(
     max_messages: int,
     serving_mode: str,
     skip_ingestion: bool,
+    max_islands: int | None,
 ) -> bool:
     """Run one refresh cycle. Returns False if a critical step failed."""
     cycle_start = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
@@ -43,7 +49,10 @@ def run_cycle(
             run_module("ingestion.ingest_shop", critical=False)
             run_module("ingestion.ingest_cosmetics", critical=False)
             run_module("ingestion.ingest_islands", critical=False)
-            run_module("ingestion.ingest_island_metrics", critical=False)
+            metrics_args: list[str] = []
+            if max_islands is not None and max_islands > 0:
+                metrics_args = ["--max-islands", str(max_islands)]
+            run_module("ingestion.ingest_island_metrics", *metrics_args, critical=False)
         else:
             safe_print("[skip] ingestion")
 
@@ -115,6 +124,12 @@ def main() -> int:
         action="store_true",
         help="Run a single cycle then exit",
     )
+    parser.add_argument(
+        "--max-islands",
+        type=int,
+        default=50,
+        help="Max islands for metrics ingestion per cycle (default: 50; 0 = all)",
+    )
     args = parser.parse_args()
 
     if args.interval_seconds < 1:
@@ -131,11 +146,14 @@ def main() -> int:
     )
     safe_print("Bot is not started here. Run separately: python -m bot.app")
 
+    max_islands = args.max_islands if args.max_islands > 0 else None
+
     while not _stop:
         run_cycle(
             max_messages=args.max_messages_per_topic,
             serving_mode=args.serving_mode,
             skip_ingestion=args.skip_ingestion,
+            max_islands=max_islands,
         )
         if args.once:
             break

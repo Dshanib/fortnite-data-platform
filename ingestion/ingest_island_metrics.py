@@ -126,4 +126,20 @@ def run_ingestion(
 
 
 if __name__ == "__main__":
-    sys.exit(run_ingestion())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Ingest island metrics to Kafka.")
+    parser.add_argument(
+        "--max-islands",
+        type=int,
+        default=None,
+        help="Limit number of islands (default: all returned by API)",
+    )
+    parser.add_argument("--island-code", default=None, help="Single island code")
+    cli = parser.parse_args()
+    sys.exit(
+        run_ingestion(
+            island_code=cli.island_code,
+            max_islands=cli.max_islands,
+        )
+    )

@@ -101,18 +101,24 @@ def format_top_islands(response: QueryResponse) -> str:
     if response.status == "error":
         return format_error(response)
 
+    rows = response.data or []
     lines = [screen_header(t.TITLE_TOP_ISLANDS, t.TITLE_TOP_ISLANDS_SUB)]
-    for row in (response.data or [])[:10]:
+    if not rows:
+        lines.append(f"\n<i>{esc(t.NO_DATA_HINT)}</i>")
+        return "\n".join(lines)
+
+    if len(rows) <= 2:
+        lines.append(f"\n<i>{esc(t.TOP_ISLANDS_FEW)}</i>")
+
+    for row in rows[:10]:
         rank = row.get("rank", "?")
-        title = row.get("title") or row.get("island_code", t.UNKNOWN_ISLAND)
+        title = row.get("title") or row.get("island_code") or t.UNKNOWN_ISLAND
         peak = format_number(row.get("peak_ccu"))
         players = format_number(row.get("unique_players"))
         lines.append(
             f"\n<b>#{esc(rank)}</b> {esc(title)}\n"
             f"   {esc(t.LABEL_PEAK_CCU)}: {peak} · {esc(t.LABEL_PLAYERS)}: {players}"
         )
-    if len(response.data or []) == 0:
-        lines.append(f"\n<i>{esc(t.NO_DATA_HINT)}</i>")
     return "\n".join(lines)
 
 
@@ -146,15 +152,16 @@ def format_source_health(response: QueryResponse) -> str:
         return format_error(response)
 
     lines = [screen_header(t.TITLE_HEALTH, "מצב אינגסטיה לפי מקור")]
-    for row in (response.data or [])[:8]:
-        name = esc(row.get("source_name", "?"))
+    for row in (response.data or [])[:6]:
+        name = esc(row.get("source_name") or "?")
         status = _status_label(row.get("latest_status"))
         ok = format_number(row.get("success_count"))
         fail = format_number(row.get("failure_count"))
+        last_ok = format_timestamp(row.get("last_success_at"))
         lines.append(
-            f"\n<b>{name}</b>\n"
-            f"   {esc(t.LABEL_STATUS)}: {status}\n"
-            f"   {esc(t.LABEL_SUCCESS)}: {ok} · {esc(t.LABEL_FAILURES)}: {fail}"
+            f"\n• <b>{name}</b> — {status}\n"
+            f"   {esc(t.LABEL_SUCCESS)}: {ok} · {esc(t.LABEL_FAILURES)}: {fail}\n"
+            f"   {esc(t.LABEL_UPDATED)}: {last_ok}"
         )
     return "\n".join(lines)
 
@@ -169,8 +176,15 @@ def format_anomalies(response: QueryResponse) -> str:
         return format_error(response)
 
     lines = [screen_header(t.TITLE_ANOMALIES)]
-    for row in (response.data or [])[:10]:
-        title = row.get("title") or row.get("island_code", "?")
+    rows = response.data or []
+    if not rows:
+        return (
+            f"{screen_header(t.TITLE_ANOMALIES)}\n"
+            f"{esc(t.ANOMALY_BODY)}"
+        )
+
+    for row in rows[:10]:
+        title = row.get("title") or row.get("island_code") or t.UNKNOWN_ISLAND
         severity = str(row.get("severity", "")).lower()
         if severity == "high":
             sev_label = esc(t.ANOMALY_SEVERITY_HIGH)
@@ -195,10 +209,17 @@ def format_avg_today(response: QueryResponse) -> str:
         return format_error(response)
 
     row = (response.data or [{}])[0]
+    period = str(row.get("period_label") or "today")
+    period_note = (
+        "היום (UTC)"
+        if period == "today"
+        else "תאריך אחרון זמין בנתונים"
+    )
     body = (
         f"📊 <b>ממוצע Peak CCU:</b> {format_number(row.get('avg_peak_ccu'), decimals=1)}\n"
         f"🪣 <b>דליות שעה:</b> {format_number(row.get('hourly_buckets'))}\n"
-        f"🕐 <b>שעה אחרונה:</b> {format_timestamp(row.get('latest_hour'))}"
+        f"🕐 <b>שעה אחרונה:</b> {format_timestamp(row.get('latest_hour'))}\n"
+        f"📅 <b>תקופה:</b> {esc(period_note)}"
     )
     return f"{screen_header(t.TITLE_AVG_TODAY)}\n{body}"
 

@@ -193,9 +193,11 @@ def test_query_service_reads_gold_views(gold_root: Path, tmp_path, monkeypatch: 
     assert anomalies.data[0]["severity"] == "high"
 
 
-def test_get_avg_today_no_data_when_no_today_rows(gold_root: Path, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_avg_today_fallback_to_latest_date(gold_root: Path, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "avg.duckdb"))
     get_settings.cache_clear()
     service = QueryService(get_settings(), auto_init=True)
     response = service.get_avg_today()
-    assert response.status == "no_data"
+    assert response.status == "ok"
+    assert response.data[0]["avg_peak_ccu"] == 90.0
+    assert response.data[0]["period_label"] == "latest_available"
