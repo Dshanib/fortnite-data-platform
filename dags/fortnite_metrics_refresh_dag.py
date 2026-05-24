@@ -9,6 +9,7 @@ from airflow import DAG
 from orchestration.airflow_dag_factory import (
     DEFAULT_DAG_ARGS,
     MAX_ISLANDS,
+    METRICS_KAFKA_MAX_MESSAGES,
     bronze_to_silver_operator,
     check_duckdb_operator,
     kafka_to_bronze_operator,
@@ -16,6 +17,10 @@ from orchestration.airflow_dag_factory import (
     script_operator,
     silver_to_gold_operator,
 )
+
+_metrics_ingest_args: list[str] = []
+if MAX_ISLANDS:
+    _metrics_ingest_args = ["--max-islands", MAX_ISLANDS]
 
 with DAG(
     dag_id="fortnite_metrics_refresh_dag",
@@ -33,14 +38,14 @@ with DAG(
         dag,
         "ingest_island_metrics",
         "ingestion.ingest_island_metrics",
-        "--max-islands",
-        MAX_ISLANDS,
-        execution_timeout=timedelta(minutes=90),
+        *_metrics_ingest_args,
+        execution_timeout=timedelta(hours=3),
     )
     kafka_metrics = kafka_to_bronze_operator(
         dag,
         "kafka_to_bronze_island_metrics",
         "fortnite.raw.island_metrics",
+        max_messages=METRICS_KAFKA_MAX_MESSAGES,
     )
     kafka_health = kafka_to_bronze_operator(
         dag,

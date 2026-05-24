@@ -46,10 +46,9 @@ def main() -> int:
 
     safe_print("\n=== Menu actions ===")
     for action in (
-        MenuAction.CURRENT_ACTIVITY,
+        MenuAction.PLAYERS_NOW,
+        MenuAction.MOST_ACTIVE_ISLAND,
         MenuAction.TOP_ISLANDS,
-        MenuAction.SHOP_SUMMARY,
-        MenuAction.SOURCE_HEALTH,
         MenuAction.ANOMALIES,
         MenuAction.HELP,
     ):
@@ -62,6 +61,17 @@ def main() -> int:
             text = format_menu_response(response)
         if not _check_text(action.value, text):
             failures += 1
+
+    safe_print("\n=== Shop category (first available) ===")
+    categories = service.get_shop_categories()
+    if categories.status == "ok" and categories.data:
+        cat = str(categories.data[0].get("category") or "unknown")
+        response = handlers._run_shop_category(cat)
+        text = format_menu_response(response, shop_category=cat)
+        if not _check_text(f"shop:{cat}", text):
+            failures += 1
+    else:
+        safe_print("  SKIP shop category (no silver shop data)")
 
     safe_print("\n=== Intent fallbacks ===")
     for intent in (

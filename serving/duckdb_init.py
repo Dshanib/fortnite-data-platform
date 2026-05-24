@@ -10,6 +10,7 @@ import duckdb
 from common.logging import get_logger
 from config.settings import Settings, get_settings
 from serving.gold_paths import GoldDatasetPaths, resolve_gold_paths
+from serving.silver_paths import SilverDatasetPaths, resolve_silver_paths
 from serving.minio_duckdb import (
     GOLD_READ_MODE_DIRECT,
     GOLD_READ_MODE_LOCAL,
@@ -27,6 +28,8 @@ _VIEW_NAMES = (
     "vw_island_activity_anomalies",
     "vw_shop_rarity_distribution",
     "vw_source_health_summary",
+    "vw_shop_items",
+    "vw_cosmetics",
 )
 
 
@@ -44,6 +47,21 @@ def _create_views(conn: duckdb.DuckDBPyConnection, paths: GoldDatasetPaths) -> N
         view_name = f"vw_{dataset}"
         if not glob_path:
             logger.warning("Skipping view %s: no parquet path for gold/%s", view_name, dataset)
+            continue
+        sql = (
+            f"CREATE OR REPLACE VIEW {view_name} AS "
+            f"SELECT * FROM read_parquet('{_sql_string(glob_path)}')"
+        )
+        conn.execute(sql)
+        logger.info("Created view %s [%s] from %s", view_name, paths.read_mode, glob_path)
+
+
+def _create_silver_views(conn: duckdb.DuckDBPyConnection, paths: SilverDatasetPaths) -> None:
+    mapping = {"shop_items": "vw_shop_items", "cosmetics": "vw_cosmetics"}
+    for dataset, view_name in mapping.items():
+        glob_path = paths.as_dict().get(dataset)
+        if not glob_path:
+            logger.warning("Skipping view %s: no parquet path for silver/%s", view_name, dataset)
             continue
         sql = (
             f"CREATE OR REPLACE VIEW {view_name} AS "
@@ -81,7 +99,9 @@ def refresh_views(
         try:
             configure_duckdb_minio(conn, settings)
             paths = resolve_gold_paths(settings, mode=GOLD_READ_MODE_DIRECT)
+            silver_paths = resolve_silver_paths(settings, mode=GOLD_READ_MODE_DIRECT)
             _create_views(conn, paths)
+            _create_silver_views(conn, silver_paths)
             _probe_direct_minio(conn, paths)
             return paths
         except (DuckDBMinioConfigError, duckdb.Error, OSError, ValueError) as exc:
@@ -93,7 +113,9 @@ def refresh_views(
             )
 
     paths = resolve_gold_paths(settings, mode=GOLD_READ_MODE_LOCAL)
+    silver_paths = resolve_silver_paths(settings, mode=GOLD_READ_MODE_LOCAL)
     _create_views(conn, paths)
+    _create_silver_views(conn, silver_paths)
     return paths
 
 

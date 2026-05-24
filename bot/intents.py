@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
+
+SHOP_CATEGORY_PREFIX = "menu:shop:"
 
 
 class Intent(str, Enum):
@@ -21,10 +23,11 @@ class MenuAction(str, Enum):
     """Inline keyboard callback_data values."""
 
     HOME = "menu:home"
-    CURRENT_ACTIVITY = "menu:current_activity"
+    ACTIVITY_HUB = "menu:activity_hub"
+    PLAYERS_NOW = "menu:players_now"
+    MOST_ACTIVE_ISLAND = "menu:most_active_island"
     TOP_ISLANDS = "menu:top_islands"
-    SHOP_SUMMARY = "menu:shop_summary"
-    SOURCE_HEALTH = "menu:source_health"
+    SHOP_HUB = "menu:shop_hub"
     ANOMALIES = "menu:anomalies"
     HELP = "menu:help"
 
@@ -46,6 +49,7 @@ _KEYWORDS: Dict[Intent, tuple[str, ...]] = {
     Intent.TOP_ISLANDS: (
         "top islands",
         "איים מובילים",
+        "איים פעילים",
         "דירוג",
         "מובילים",
         "leaderboard",
@@ -72,9 +76,24 @@ def detect_intent(text: str) -> Intent:
     return Intent.UNKNOWN
 
 
+def parse_menu_callback(callback_data: str) -> Tuple[Optional[MenuAction], Optional[str]]:
+    """
+    Parse callback_data into a menu action and optional payload (e.g. shop category).
+    """
+    data = (callback_data or "").strip()
+    if not data:
+        return None, None
+    if data.startswith(SHOP_CATEGORY_PREFIX):
+        return None, data[len(SHOP_CATEGORY_PREFIX) :]
+    try:
+        return MenuAction(data), None
+    except ValueError:
+        return None, None
+
+
 def menu_action_for_callback(callback_data: str) -> Optional[MenuAction]:
     """Parse callback_data into a menu action, if recognized."""
-    try:
-        return MenuAction(callback_data)
-    except ValueError:
+    action, payload = parse_menu_callback(callback_data)
+    if payload is not None:
         return None
+    return action

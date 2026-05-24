@@ -37,7 +37,7 @@ class QueryService:
         finally:
             conn.close()
 
-    def _connect(self) -> duckdb.DuckDBPyConnection:
+    def _connect(self, *, refresh: bool = True) -> duckdb.DuckDBPyConnection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = duckdb.connect(str(self._db_path))
         if get_gold_read_mode(self._settings) == GOLD_READ_MODE_DIRECT:
@@ -45,6 +45,8 @@ class QueryService:
                 configure_duckdb_minio(conn, self._settings)
             except DuckDBMinioConfigError as exc:
                 logger.warning("MinIO S3 settings not applied on connect: %s", exc)
+        if refresh:
+            refresh_views(conn, self._settings, allow_fallback=True)
         return conn
 
     @staticmethod
@@ -113,71 +115,190 @@ class QueryService:
             logger.error("Query %s failed: %s", query_name, exc)
             return self._error(query_name, f"Query error: {exc}")
 
-    def get_current_ccu(self) -> QueryResponse:
-        """Top island by peak_ccu among recently updated islands; global data_as_of timestamp."""
+    def get_players_online_summary(self) -> QueryResponse:
+        """Total active players for today (calendar day if present, else latest day in Gold)."""
         return self._run_query(
-            "get_current_ccu",
+            "get_players_online_summary",
             """
-            WITH bounds AS (
-                SELECT MAX(CAST(latest_metric_timestamp AS TIMESTAMPTZ)) AS data_as_of
-                FROM vw_current_island_activity
+            WITH target_day AS (
+                SELECT COALESCE(
+                    (
+                        SELECT MAX(TRY_CAST(metric_hour AS DATE))
+                        FROM vw_island_metric_hourly
+                        WHERE TRY_CAST(metric_hour AS DATE) = CURRENT_DATE
+                    ),
+                    (
+                        SELECT MAX(TRY_CAST(metric_hour AS DATE))
+                        FROM vw_island_metric_hourly
+                    )
+                ) AS metric_date
+            ),
+            day_rows AS (
+                SELECT h.*
+                FROM vw_island_metric_hourly AS h
+                CROSS JOIN target_day AS d
+                WHERE TRY_CAST(h.metric_hour AS DATE) = d.metric_date
+            ),
+            uniq_by_island AS (
+                SELECT island_code, MAX(max_value) AS island_unique
+                FROM day_rows
+                WHERE metric_name = 'uniquePlayers'
+                GROUP BY island_code
+            ),
+            plays_by_island AS (
+                SELECT island_code, MAX(max_value) AS island_plays
+                FROM day_rows
+                WHERE metric_name = 'plays'
+                GROUP BY island_code
+            ),
+            peak_by_hour AS (
+                SELECT metric_hour, SUM(max_value) AS platform_peak
+                FROM day_rows
+                WHERE metric_name = 'peakCCU'
+                GROUP BY metric_hour
+            ),
+            day_bounds AS (
+                SELECT
+                    MIN(metric_hour) AS first_metric_hour,
+                    MAX(metric_hour) AS last_metric_hour,
+                    COUNT(DISTINCT metric_hour) AS hours_with_data
+                FROM day_rows
+                WHERE metric_name = 'uniquePlayers'
+            )
+            SELECT
+                CAST((SELECT metric_date FROM target_day) AS VARCHAR) AS metric_date,
+                COALESCE((SELECT SUM(island_unique) FROM uniq_by_island), 0)
+                    AS active_players_today,
+                COALESCE((SELECT SUM(island_unique) FROM uniq_by_island), 0)
+                    AS unique_players_today,
+                COALESCE((SELECT SUM(island_plays) FROM plays_by_island), 0) AS plays_today,
+                (SELECT COUNT(*) FROM uniq_by_island) AS islands_with_data,
+                COALESCE((SELECT MAX(platform_peak) FROM peak_by_hour), 0) AS peak_ccu_today,
+                (SELECT first_metric_hour FROM day_bounds) AS first_metric_hour,
+                (SELECT last_metric_hour FROM day_bounds) AS last_metric_hour,
+                (SELECT hours_with_data FROM day_bounds) AS hours_with_data,
+                (SELECT metric_date = CURRENT_DATE FROM target_day) AS is_calendar_today,
+                (SELECT last_metric_hour FROM day_bounds) AS data_as_of
+            """,
+            required_view="vw_island_metric_hourly",
+        )
+
+    def get_most_active_island(self) -> QueryResponse:
+        """Top island by peak_ccu on the latest metric day with full activity details."""
+        return self._run_query(
+            "get_most_active_island",
+            """
+            WITH target_day AS (
+                SELECT COALESCE(
+                    (
+                        SELECT MAX(CAST(latest_metric_timestamp AS DATE))
+                        FROM vw_current_island_activity
+                        WHERE CAST(latest_metric_timestamp AS DATE) = CURRENT_DATE
+                    ),
+                    (
+                        SELECT MAX(CAST(latest_metric_timestamp AS DATE))
+                        FROM vw_current_island_activity
+                    )
+                ) AS metric_date
             ),
             activity AS (
                 SELECT
                     a.island_code,
                     a.title,
+                    a.creator_code,
                     a.peak_ccu,
+                    a.unique_players,
+                    a.plays,
+                    a.minutes_played,
                     CAST(a.latest_metric_timestamp AS TIMESTAMPTZ) AS latest_metric_timestamp,
-                    b.data_as_of
+                    CAST((SELECT metric_date FROM target_day) AS DATE) AS metric_date,
+                    (SELECT metric_date = CURRENT_DATE FROM target_day) AS is_calendar_today
                 FROM vw_current_island_activity AS a
-                CROSS JOIN bounds AS b
+                CROSS JOIN target_day AS d
                 WHERE a.peak_ccu IS NOT NULL
-                  AND b.data_as_of IS NOT NULL
-                  AND date_trunc('day', CAST(a.latest_metric_timestamp AS TIMESTAMPTZ))
-                      = date_trunc('day', b.data_as_of)
+                  AND CAST(a.latest_metric_timestamp AS DATE) = d.metric_date
             )
             SELECT
-                island_code,
-                title,
-                peak_ccu,
-                (SELECT COALESCE(SUM(peak_ccu), 0) FROM activity) AS total_peak_ccu,
-                latest_metric_timestamp,
-                data_as_of
+                *,
+                (SELECT MAX(latest_metric_timestamp) FROM activity) AS data_as_of
             FROM activity
-            ORDER BY peak_ccu DESC
+            ORDER BY peak_ccu DESC NULLS LAST
             LIMIT 1
             """,
             required_view="vw_current_island_activity",
         )
 
-    def get_top_islands(self, limit: int = 10) -> QueryResponse:
-        """Ranked islands from gold, preferring the latest metric day in Gold."""
-        safe_limit = max(1, min(int(limit), 100))
+    def get_current_ccu(self) -> QueryResponse:
+        """Backward-compatible alias for the most active island summary."""
+        response = self.get_most_active_island()
+        return QueryResponse(
+            query_name="get_current_ccu",
+            success=response.success,
+            status=response.status,
+            data=response.data,
+            message=response.message,
+        )
+
+    def get_top_islands(self, limit: int = 100) -> QueryResponse:
+        """All islands with activity on the latest metric day, ranked by peak CCU."""
+        safe_limit = max(1, min(int(limit), 500))
         return self._run_query(
             "get_top_islands",
             f"""
-            WITH bounds AS (
-                SELECT MAX(CAST(latest_metric_timestamp AS TIMESTAMPTZ)) AS data_as_of
-                FROM vw_top_islands_by_peak_ccu
+            WITH target_day AS (
+                SELECT COALESCE(
+                    (
+                        SELECT MAX(CAST(latest_metric_timestamp AS DATE))
+                        FROM vw_current_island_activity
+                        WHERE CAST(latest_metric_timestamp AS DATE) = CURRENT_DATE
+                    ),
+                    (
+                        SELECT MAX(CAST(latest_metric_timestamp AS DATE))
+                        FROM vw_current_island_activity
+                    )
+                ) AS metric_date
+            ),
+            today AS (
+                SELECT
+                    a.island_code,
+                    a.title,
+                    a.peak_ccu,
+                    a.unique_players,
+                    a.plays,
+                    a.minutes_played,
+                    CAST(a.latest_metric_timestamp AS TIMESTAMPTZ) AS latest_metric_timestamp,
+                    CAST((SELECT metric_date FROM target_day) AS DATE) AS metric_date,
+                    (SELECT metric_date = CURRENT_DATE FROM target_day) AS is_calendar_today
+                FROM vw_current_island_activity AS a
+                CROSS JOIN target_day AS d
+                WHERE CAST(a.latest_metric_timestamp AS DATE) = d.metric_date
+            ),
+            ranked AS (
+                SELECT
+                    *,
+                    ROW_NUMBER() OVER (
+                        ORDER BY peak_ccu DESC NULLS LAST, unique_players DESC NULLS LAST
+                    ) AS rank
+                FROM today
             )
             SELECT
-                t.rank,
-                t.island_code,
-                t.title,
-                t.peak_ccu,
-                t.unique_players,
-                t.plays,
-                CAST(t.latest_metric_timestamp AS TIMESTAMPTZ) AS latest_metric_timestamp,
-                b.data_as_of
-            FROM vw_top_islands_by_peak_ccu AS t
-            CROSS JOIN bounds AS b
-            WHERE b.data_as_of IS NULL
-               OR date_trunc('day', CAST(t.latest_metric_timestamp AS TIMESTAMPTZ))
-                  = date_trunc('day', b.data_as_of)
-            ORDER BY t.rank ASC
+                rank,
+                island_code,
+                title,
+                peak_ccu,
+                unique_players,
+                plays,
+                minutes_played,
+                latest_metric_timestamp,
+                (SELECT MAX(latest_metric_timestamp) FROM today) AS data_as_of,
+                (SELECT MAX(metric_date) FROM today) AS metric_date,
+                (SELECT BOOL_OR(is_calendar_today) FROM today) AS is_calendar_today,
+                (SELECT COUNT(*) FROM today) AS total_islands
+            FROM ranked
+            ORDER BY rank ASC
             LIMIT {safe_limit}
             """,
-            required_view="vw_top_islands_by_peak_ccu",
+            required_view="vw_current_island_activity",
         )
 
     def get_avg_today(self) -> QueryResponse:
@@ -263,6 +384,74 @@ class QueryService:
             required_view="vw_shop_rarity_distribution",
         )
 
+    def get_shop_categories(self) -> QueryResponse:
+        """Shop sections (layout_id) for the latest snapshot — matches Fortnite shop layout."""
+        return self._run_query(
+            "get_shop_categories",
+            """
+            WITH latest AS (
+                SELECT MAX(snapshot_date) AS snapshot_date
+                FROM vw_shop_items
+            )
+            SELECT
+                COALESCE(NULLIF(TRIM(s.layout_id), ''), 'other') AS category,
+                COUNT(*) AS item_count,
+                MAX(s.snapshot_date) AS snapshot_date
+            FROM vw_shop_items AS s
+            CROSS JOIN latest AS l
+            WHERE s.snapshot_date = l.snapshot_date
+            GROUP BY 1
+            HAVING COUNT(*) > 0
+            ORDER BY item_count DESC, category ASC
+            """,
+            required_view="vw_shop_items",
+        )
+
+    def get_shop_items_by_category(self, category: str, *, limit: int = 8) -> QueryResponse:
+        """Shop items in a layout section for the latest snapshot."""
+        safe_limit = max(1, min(int(limit), 12))
+        safe_category = (category or "other").strip().replace("'", "''")[:64]
+        return self._run_query(
+            "get_shop_items_by_category",
+            f"""
+            WITH latest AS (
+                SELECT MAX(snapshot_date) AS snapshot_date
+                FROM vw_shop_items
+            ),
+            filtered AS (
+                SELECT
+                    s.offer_id,
+                    s.dev_name,
+                    COALESCE(
+                        c.name,
+                        CASE
+                            WHEN LENGTH(s.dev_name) > 48
+                                THEN SUBSTRING(s.dev_name, 1, 45) || '...'
+                            ELSE s.dev_name
+                        END
+                    ) AS item_name,
+                    COALESCE(NULLIF(TRIM(s.layout_id), ''), 'other') AS category,
+                    COALESCE(NULLIF(TRIM(c.rarity), ''), 'unknown') AS rarity,
+                    s.final_price,
+                    s.regular_price,
+                    s.snapshot_date
+                FROM vw_shop_items AS s
+                CROSS JOIN latest AS l
+                LEFT JOIN vw_cosmetics AS c ON s.dev_name = c.cosmetic_id
+                WHERE s.snapshot_date = l.snapshot_date
+                  AND LOWER(COALESCE(NULLIF(TRIM(s.layout_id), ''), 'other'))
+                      = LOWER('{safe_category}')
+            )
+            SELECT
+                f.*,
+                (SELECT COUNT(*) FROM filtered) AS total_in_category
+            FROM filtered AS f
+            ORDER BY f.final_price DESC NULLS LAST, f.item_name ASC
+            LIMIT {safe_limit}
+            """,
+            required_view="vw_shop_items",
+        )
+
     def get_source_health(self) -> QueryResponse:
         """Ingestion health summary by source."""
         return self._run_query(
@@ -272,6 +461,51 @@ class QueryService:
                    success_count, failure_count, latest_status
             FROM vw_source_health_summary
             ORDER BY source_name
+            """,
+            required_view="vw_source_health_summary",
+        )
+
+    def get_data_freshness(self) -> QueryResponse:
+        """Pipeline + Gold timestamps for bot freshness footer."""
+        return self._run_query(
+            "get_data_freshness",
+            """
+            WITH latest_metric_day AS (
+                SELECT COALESCE(
+                    (
+                        SELECT MAX(TRY_CAST(metric_hour AS DATE))
+                        FROM vw_island_metric_hourly
+                        WHERE TRY_CAST(metric_hour AS DATE) = CURRENT_DATE
+                    ),
+                    (
+                        SELECT MAX(TRY_CAST(metric_hour AS DATE))
+                        FROM vw_island_metric_hourly
+                    )
+                ) AS metric_date
+            )
+            SELECT
+                (SELECT MAX(last_success_at)
+                 FROM vw_source_health_summary
+                 WHERE source_name = 'fortnite_ecosystem_api') AS metrics_pipeline_at,
+                (SELECT MAX(last_success_at)
+                 FROM vw_source_health_summary
+                 WHERE source_name = 'fortnite_api_com') AS shop_pipeline_at,
+                (SELECT MAX(TRY_CAST(metric_hour AS TIMESTAMPTZ))
+                 FROM vw_island_metric_hourly) AS latest_metric_hour,
+                (SELECT MAX(CAST(latest_metric_timestamp AS TIMESTAMPTZ))
+                 FROM vw_current_island_activity) AS latest_activity_at,
+                (SELECT MAX(snapshot_date)
+                 FROM vw_shop_rarity_distribution) AS latest_shop_snapshot,
+                CAST((SELECT metric_date FROM latest_metric_day) AS VARCHAR)
+                    AS latest_metric_date,
+                (SELECT metric_date = CURRENT_DATE FROM latest_metric_day)
+                    AS metric_day_is_today,
+                (
+                    SELECT COUNT(DISTINCT island_code)
+                    FROM vw_island_metric_hourly AS h
+                    CROSS JOIN latest_metric_day AS d
+                    WHERE TRY_CAST(h.metric_hour AS DATE) = d.metric_date
+                ) AS islands_on_metric_day
             """,
             required_view="vw_source_health_summary",
         )

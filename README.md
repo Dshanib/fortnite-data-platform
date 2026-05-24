@@ -30,8 +30,8 @@ Do **not** put secrets in this README or commit `.env` to git.
 ## Validate API connectivity
 
 ```bash
-python scripts/test_fortnite_api.py
-python scripts/test_fortnite_ecosystem_api.py
+python scripts/check_fortnite_api.py
+python scripts/check_fortnite_ecosystem.py
 ```
 
 ## Kafka
@@ -267,10 +267,14 @@ AIRFLOW_FERNET_KEY=<generate with: python -c "from cryptography.fernet import Fe
 Optional tuning:
 
 ```bash
-FORTNITE_MAX_ISLANDS=50
+FORTNITE_MAX_ISLANDS=0          # 0 = all discoverable islands (API pagination)
 FORTNITE_SERVING_MODE=direct_minio
-FORTNITE_MAX_MESSAGES_PER_TOPIC=20
+FORTNITE_MAX_MESSAGES_PER_TOPIC=5000   # ≥ islands per metrics run
+FORTNITE_ECOSYSTEM_MAX_ISLAND_PAGES=0  # 0 = all /islands pages
+FORTNITE_ECOSYSTEM_METRICS_DELAY_SECONDS=0.15
 ```
+
+**Ecosystem API note:** metrics are **aggregates per island** (`uniquePlayers`, `peakCCU`, `plays`) — not a list of individual player accounts. Historical metrics are limited to **7 days**; islands need **≥5 unique players** in an interval or values are null.
 
 ### DAGs
 
@@ -346,9 +350,9 @@ python scripts/run_bot.py
 | Command / action | Query |
 |------------------|-------|
 | `/start`, `/menu` | תפריט ראשי בעברית |
-| **📊 כמה שחקנים מחוברים?** | `get_current_ccu()` |
-| **🏆 האיים הכי פופולריים** | `get_top_islands(10)` |
-| **🛒 מה יש בחנות היום?** | `get_shop_rarity_distribution()` |
+| **📊 פעילות שחקנים** → כמה מחוברים / האי הכי פעיל | `get_players_online_summary()` · `get_most_active_island()` |
+| **🗺️ איים פעילים היום** | `get_top_islands(10)` |
+| **🛒 חנות לפי קטגוריה** → בחירת קטגוריה → רשימת פריטים | `get_shop_categories()` · `get_shop_items_by_category()` |
 | **⚠️ חריגות פעילות** | `get_recent_anomalies(10)` |
 | **💬 עזרה ומדריך** | מדריך שימוש |
 | **🏠 חזרה לתפריט** | חזרה מהתוצאה |
@@ -357,9 +361,12 @@ Free-text works in Hebrew or English (`פעילות`, `חנות`, `איים`, `�
 
 ## Tests
 
+Layout: `tests/unit/` (offline, default) and `tests/integration/` (live APIs). See [tests/README.md](tests/README.md).
+
 ```bash
 python -m compileall .
-python -m pytest
+python -m pytest                    # unit only
+pytest tests/integration -m integration   # optional live API checks
 ```
 
 ## CI

@@ -29,9 +29,9 @@ x-airflow-common: &airflow-common
     # In-container DNS (override host localhost from .env)
     KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     MINIO_ENDPOINT: http://minio:9000
-    FORTNITE_MAX_ISLANDS: ${FORTNITE_MAX_ISLANDS:-50}
+    FORTNITE_MAX_ISLANDS: ${FORTNITE_MAX_ISLANDS:-0}
     FORTNITE_SERVING_MODE: ${FORTNITE_SERVING_MODE:-direct_minio}
-    FORTNITE_MAX_MESSAGES_PER_TOPIC: ${FORTNITE_MAX_MESSAGES_PER_TOPIC:-20}
+    FORTNITE_MAX_MESSAGES_PER_TOPIC: ${FORTNITE_MAX_MESSAGES_PER_TOPIC:-5000}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs

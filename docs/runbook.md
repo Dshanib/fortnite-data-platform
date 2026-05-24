@@ -9,8 +9,8 @@
    - `python scripts/check_minio.py`
    - `python scripts/check_kafka.py`
 4. Validate APIs:
-   - `python scripts/test_fortnite_api.py`
-   - `python scripts/test_fortnite_ecosystem_api.py`
+   - `python scripts/check_fortnite_api.py`
+   - `python scripts/check_fortnite_ecosystem.py`
 5. Run ingestion (requires Kafka + sources):
    - `python -m ingestion.ingest_shop`
    - `python -m ingestion.ingest_cosmetics`

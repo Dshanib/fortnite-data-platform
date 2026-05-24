@@ -78,30 +78,128 @@ class EcosystemApiClient:
         except requests.RequestException as exc:
             raise ApiClientError("Epic OAuth authentication failed") from exc
 
-    def fetch_islands(self, *, size: Optional[int] = None) -> ApiFetchResult:
-        """GET /islands — full response with HTTP metadata."""
+    def fetch_islands(
+        self,
+        *,
+        size: Optional[int] = None,
+        after: Optional[str] = None,
+    ) -> ApiFetchResult:
+        """GET /islands — one page (cursor via ``after``)."""
         page_size = size or self._settings.fortnite_ecosystem_island_page_size
+        params: Dict[str, Any] = {"size": page_size}
+        if after:
+            params["after"] = after
         try:
             return self._api.get_detailed(
                 f"{self._base}/islands",
                 headers=self._auth_headers(),
-                params={"size": page_size},
+                params=params,
             )
         except ApiClientError as exc:
             self._raise_auth_hint(exc)
             raise
 
-    def list_islands(self, *, size: Optional[int] = None) -> Dict[str, Any]:
-        """GET /islands — paginated island catalog."""
-        return self.fetch_islands(size=size).body
+    def list_islands(
+        self,
+        *,
+        size: Optional[int] = None,
+        after: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """GET /islands — one page of island catalog."""
+        return self.fetch_islands(size=size, after=after).body
+
+    @staticmethod
+    def _next_page_cursor(body: Dict[str, Any]) -> Optional[str]:
+        meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+        page = meta.get("page") if isinstance(meta.get("page"), dict) else {}
+        cursor = page.get("nextCursor")
+        if cursor:
+            return str(cursor)
+        links = body.get("links") if isinstance(body.get("links"), dict) else {}
+        nxt = links.get("next")
+        if isinstance(nxt, str) and "after=" in nxt:
+            from urllib.parse import parse_qs, urlparse
+
+            query = parse_qs(urlparse(nxt).query)
+            values = query.get("after") or []
+            return str(values[0]) if values else None
+        return None
 
     def list_island_summaries(self, *, size: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Return island records from a list response."""
+        """Return island records from the first API page only."""
         data = self.list_islands(size=size)
         islands = data.get("data") or []
         if not islands:
             raise IngestionError("Ecosystem API returned no islands")
         return islands
+
+    def list_all_island_summaries(
+        self,
+        *,
+        page_size: Optional[int] = None,
+        max_pages: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch all discoverable islands by following cursor pagination."""
+        size = page_size or self._settings.fortnite_ecosystem_island_page_size
+        page_cap = (
+            max_pages
+            if max_pages is not None
+            else self._settings.fortnite_ecosystem_max_island_pages
+        )
+        from ingestion.island_catalog import effective_page_cap
+
+        page_cap = effective_page_cap(page_cap)
+        all_islands: List[Dict[str, Any]] = []
+        after: Optional[str] = None
+        pages = 0
+        seen_cursors: set[str] = set()
+
+        while pages < page_cap:
+            body = self.list_islands(size=size, after=after)
+            batch = body.get("data") or []
+            if not batch:
+                break
+            all_islands.extend(batch)
+            pages += 1
+            cursor = self._next_page_cursor(body)
+            if not cursor:
+                break
+            if len(batch) < size:
+                break
+            if cursor in seen_cursors:
+                logger.warning("Island pagination stopped: repeated cursor")
+                break
+            seen_cursors.add(cursor)
+            after = cursor
+
+        if page_cap > 0 and pages >= page_cap:
+            logger.warning(
+                "Island pagination stopped at max_pages=%s (%s islands)",
+                page_cap,
+                len(all_islands),
+            )
+
+        if not all_islands:
+            raise IngestionError("Ecosystem API returned no islands")
+        logger.info(
+            "Listed %s islands across %s page(s) (page_size=%s)",
+            len(all_islands),
+            pages,
+            size,
+        )
+        return all_islands
+
+    def fetch_all_islands(self) -> ApiFetchResult:
+        """GET /islands — all pages merged into one payload."""
+        started = time.perf_counter()
+        islands = self.list_all_island_summaries()
+        latency_ms = (time.perf_counter() - started) * 1000
+        return ApiFetchResult(
+            status_code=200,
+            latency_ms=latency_ms,
+            body={"data": islands, "meta": {"count": len(islands), "pagesMerged": True}},
+            fetched_at=utc_now_iso(),
+        )
 
     def get_island(self, island_code: str) -> Dict[str, Any]:
         """GET /islands/{code} — island metadata."""

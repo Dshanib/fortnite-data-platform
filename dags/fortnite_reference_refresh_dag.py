@@ -34,7 +34,12 @@ with DAG(
         "ingestion.ingest_cosmetics",
         execution_timeout=timedelta(minutes=45),
     )
-    ingest_islands = module_operator(dag, "ingest_islands", "ingestion.ingest_islands")
+    ingest_islands = module_operator(
+        dag,
+        "ingest_islands",
+        "ingestion.ingest_islands",
+        execution_timeout=timedelta(minutes=30),
+    )
     kafka_cosmetics = kafka_to_bronze_operator(
         dag,
         "kafka_to_bronze_cosmetics",
@@ -44,6 +49,7 @@ with DAG(
         dag,
         "kafka_to_bronze_islands",
         "fortnite.raw.islands",
+        max_messages="200",
     )
     kafka_health = kafka_to_bronze_operator(
         dag,

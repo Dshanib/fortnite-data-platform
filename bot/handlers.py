@@ -8,14 +8,18 @@ from telegram.ext import ContextTypes
 
 from bot import copy_he as t
 from bot.formatters import (
+    activity_hub_text,
     back_menu_keyboard,
     format_menu_response,
     help_text,
     main_menu_keyboard,
+    shop_back_keyboard,
+    shop_hub_text,
     unknown_input_text,
     welcome_text,
 )
-from bot.intents import Intent, MenuAction, detect_intent, menu_action_for_callback
+from bot.ui import activity_submenu_keyboard, esc, shop_category_keyboard
+from bot.intents import SHOP_CATEGORY_PREFIX, Intent, MenuAction, detect_intent, parse_menu_callback
 from common.logging import get_logger
 from common.models import QueryResponse
 from serving.query_service import QueryService
@@ -69,9 +73,7 @@ class BotHandlers:
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /help — show guide with back to menu."""
-        await self._send_message(
-            update, help_text(), keyboard=back_menu_keyboard()
-        )
+        await self._send_message(update, help_text(), keyboard=back_menu_keyboard())
 
     async def menu_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /menu — main menu."""
@@ -85,7 +87,18 @@ class BotHandlers:
         if not query:
             return
 
-        action = menu_action_for_callback(query.data or "")
+        data = query.data or ""
+        action, shop_category = parse_menu_callback(data)
+
+        if shop_category is not None:
+            await query.answer(t.LOADING)
+            response = self._run_shop_category(shop_category)
+            text = format_menu_response(response, shop_category=shop_category)
+            await self._send_message(
+                update, text, keyboard=shop_back_keyboard(), edit=True
+            )
+            return
+
         if action is None:
             await query.answer(t.UNKNOWN_ACTION, show_alert=True)
             return
@@ -99,6 +112,37 @@ class BotHandlers:
             await query.answer()
             await self._send_message(
                 update, help_text(), keyboard=back_menu_keyboard(), edit=True
+            )
+            return
+
+        if action == MenuAction.ACTIVITY_HUB:
+            await query.answer()
+            await self._send_message(
+                update,
+                activity_hub_text(),
+                keyboard=activity_submenu_keyboard(),
+                edit=True,
+            )
+            return
+
+        if action == MenuAction.SHOP_HUB:
+            await query.answer(t.LOADING)
+            categories = self._queries.get_shop_categories()
+            body = shop_hub_text()
+            if categories.status != "ok" or not categories.data:
+                body = f"{body}\n\n<i>{esc(t.SHOP_NO_CATEGORIES)}</i>"
+                await self._send_message(
+                    update,
+                    body,
+                    keyboard=back_menu_keyboard(),
+                    edit=True,
+                )
+                return
+            await self._send_message(
+                update,
+                body,
+                keyboard=shop_category_keyboard(categories.data),
+                edit=True,
             )
             return
 
@@ -133,10 +177,9 @@ class BotHandlers:
 
     def _query_method_for_menu(self, action: MenuAction):
         mapping = {
-            MenuAction.CURRENT_ACTIVITY: self._queries.get_current_ccu,
-            MenuAction.TOP_ISLANDS: lambda: self._queries.get_top_islands(10),
-            MenuAction.SHOP_SUMMARY: self._queries.get_shop_rarity_distribution,
-            MenuAction.SOURCE_HEALTH: self._queries.get_source_health,
+            MenuAction.PLAYERS_NOW: self._queries.get_players_online_summary,
+            MenuAction.MOST_ACTIVE_ISLAND: self._queries.get_most_active_island,
+            MenuAction.TOP_ISLANDS: lambda: self._queries.get_top_islands(500),
             MenuAction.ANOMALIES: self._queries.get_recent_anomalies,
         }
         return mapping.get(action)
@@ -163,14 +206,27 @@ class BotHandlers:
                 message=str(exc),
             )
 
+    def _run_shop_category(self, category: str) -> QueryResponse:
+        try:
+            return self._queries.get_shop_items_by_category(category)
+        except Exception as exc:
+            logger.exception("Shop category %s failed", category)
+            return QueryResponse(
+                query_name="get_shop_items_by_category",
+                success=False,
+                status="error",
+                data=[],
+                message=str(exc),
+            )
+
     def _dispatch_intent(self, intent: Intent) -> QueryResponse:
         mapping = {
-            Intent.CURRENT_CCU: self._queries.get_current_ccu,
+            Intent.CURRENT_CCU: self._queries.get_most_active_island,
             Intent.AVG_CCU_TODAY: self._queries.get_avg_today,
             Intent.ANOMALY_CHECK: self._queries.get_recent_anomalies,
-            Intent.SHOP_SUMMARY: self._queries.get_shop_rarity_distribution,
+            Intent.SHOP_SUMMARY: self._queries.get_shop_categories,
             Intent.SOURCE_HEALTH: self._queries.get_source_health,
-            Intent.TOP_ISLANDS: lambda: self._queries.get_top_islands(10),
+            Intent.TOP_ISLANDS: lambda: self._queries.get_top_islands(500),
         }
         handler = mapping.get(intent)
         if handler is None:

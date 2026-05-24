@@ -35,6 +35,15 @@ def _parse_csv(value: str) -> List[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+def _parse_optional_positive_int(value: str) -> Optional[int]:
+    """0 or empty means no limit."""
+    raw = (value or "").strip()
+    if not raw or raw == "0":
+        return None
+    parsed = int(raw)
+    return parsed if parsed > 0 else None
+
+
 @dataclass(frozen=True)
 class Settings:
     """Typed configuration object."""
@@ -66,8 +75,14 @@ class Settings:
     fortnite_client_secret: str
     fortnite_ecosystem_metric_interval: str
     fortnite_ecosystem_island_page_size: int
+    fortnite_ecosystem_max_island_pages: int
+    fortnite_ecosystem_catalog_max_pages: int
+    fortnite_ecosystem_catalog_page_delay_seconds: float
+    fortnite_ecosystem_metrics_delay_seconds: float
     fortnite_ecosystem_demo_island_code: str
     fortnite_ecosystem_default_metrics: List[str]
+    fortnite_max_islands: Optional[int]
+    fortnite_max_messages_per_topic: int
 
     log_level: str
     request_timeout_seconds: int
@@ -139,6 +154,18 @@ def get_settings() -> Settings:
         fortnite_ecosystem_island_page_size=int(
             _optional("FORTNITE_ECOSYSTEM_ISLAND_PAGE_SIZE", "100")
         ),
+        fortnite_ecosystem_max_island_pages=int(
+            _optional("FORTNITE_ECOSYSTEM_MAX_ISLAND_PAGES", "15")
+        ),
+        fortnite_ecosystem_catalog_max_pages=int(
+            _optional("FORTNITE_ECOSYSTEM_CATALOG_MAX_PAGES", "50")
+        ),
+        fortnite_ecosystem_catalog_page_delay_seconds=float(
+            _optional("FORTNITE_ECOSYSTEM_CATALOG_PAGE_DELAY_SECONDS", "0.05")
+        ),
+        fortnite_ecosystem_metrics_delay_seconds=float(
+            _optional("FORTNITE_ECOSYSTEM_METRICS_DELAY_SECONDS", "0.15")
+        ),
         fortnite_ecosystem_demo_island_code=_optional(
             "FORTNITE_ECOSYSTEM_DEMO_ISLAND_CODE", ""
         ),
@@ -147,6 +174,12 @@ def get_settings() -> Settings:
                 "FORTNITE_ECOSYSTEM_DEFAULT_METRICS",
                 "peakCCU,uniquePlayers,plays,minutesPlayed",
             )
+        ),
+        fortnite_max_islands=_parse_optional_positive_int(
+            _optional("FORTNITE_MAX_ISLANDS", "0")
+        ),
+        fortnite_max_messages_per_topic=int(
+            _optional("FORTNITE_MAX_MESSAGES_PER_TOPIC", "5000")
         ),
         log_level=_optional("LOG_LEVEL", "INFO"),
         request_timeout_seconds=int(_optional("REQUEST_TIMEOUT_SECONDS", "30")),

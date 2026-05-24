@@ -17,6 +17,10 @@ from orchestration.airflow_dag_factory import (
     silver_to_gold_operator,
 )
 
+_demo_metrics_args: list[str] = []
+if MAX_ISLANDS:
+    _demo_metrics_args = ["--max-islands", MAX_ISLANDS]
+
 with DAG(
     dag_id="fortnite_full_demo_dag",
     description="Full Fortnite lakehouse refresh for manual demo runs",
@@ -39,9 +43,8 @@ with DAG(
         dag,
         "ingest_island_metrics",
         "ingestion.ingest_island_metrics",
-        "--max-islands",
-        MAX_ISLANDS,
-        execution_timeout=timedelta(minutes=90),
+        *_demo_metrics_args,
+        execution_timeout=timedelta(hours=3),
     )
     kafka_all = kafka_to_bronze_operator(dag, "kafka_to_bronze_all_topics", full=True)
     bronze_silver = bronze_to_silver_operator(dag)

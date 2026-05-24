@@ -4,16 +4,28 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from airflow.operators.bash import BashOperator
 
 PROJECT_ROOT = os.environ.get("FORTNITE_PROJECT_ROOT", "/opt/airflow/project")
 PYTHON_BIN = os.environ.get("FORTNITE_PYTHON", "python")
 
-MAX_ISLANDS = os.environ.get("FORTNITE_MAX_ISLANDS", "50")
+def _optional_max_islands() -> Optional[str]:
+    """0 or empty = ingest metrics for all islands returned by the API."""
+    raw = os.environ.get("FORTNITE_MAX_ISLANDS", "0").strip()
+    if not raw or raw == "0":
+        return None
+    return raw
+
+
+MAX_ISLANDS = _optional_max_islands()
 SERVING_MODE = os.environ.get("FORTNITE_SERVING_MODE", "direct_minio")
-MAX_MESSAGES_PER_TOPIC = os.environ.get("FORTNITE_MAX_MESSAGES_PER_TOPIC", "20")
+MAX_MESSAGES_PER_TOPIC = os.environ.get("FORTNITE_MAX_MESSAGES_PER_TOPIC", "5000")
+METRICS_KAFKA_MAX_MESSAGES = os.environ.get(
+    "FORTNITE_METRICS_KAFKA_MAX_MESSAGES",
+    MAX_MESSAGES_PER_TOPIC,
+)
 
 DEFAULT_TASK_ARGS: Dict[str, Any] = {
     "retries": 2,
@@ -91,7 +103,7 @@ def kafka_to_bronze_operator(
     **kwargs: Any,
 ) -> BashOperator:
     """Consume one Kafka topic (or --full for all topics) into MinIO bronze."""
-    args: list[str] = []
+    args: List[str] = []
     if full:
         args.append("--full")
     elif topic:

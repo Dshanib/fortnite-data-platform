@@ -96,7 +96,34 @@ def gold_root(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Path:
                     "min_value": 80.0,
                     "max_value": 100.0,
                     "sample_count": 3,
-                }
+                },
+                {
+                    "island_code": "B",
+                    "metric_name": "peakCCU",
+                    "metric_hour": "2026-05-24 10:00:00+00:00",
+                    "avg_value": 40.0,
+                    "min_value": 30.0,
+                    "max_value": 80.0,
+                    "sample_count": 2,
+                },
+                {
+                    "island_code": "B",
+                    "metric_name": "uniquePlayers",
+                    "metric_hour": "2026-05-24 10:00:00+00:00",
+                    "avg_value": 50.0,
+                    "min_value": 40.0,
+                    "max_value": 50.0,
+                    "sample_count": 2,
+                },
+                {
+                    "island_code": "B",
+                    "metric_name": "plays",
+                    "metric_hour": "2026-05-24 10:00:00+00:00",
+                    "avg_value": 5.0,
+                    "min_value": 5.0,
+                    "max_value": 5.0,
+                    "sample_count": 1,
+                },
             ]
         ),
     )
@@ -185,12 +212,20 @@ def test_query_service_reads_gold_views(gold_root: Path, tmp_path, monkeypatch: 
     assert ccu.status == "ok"
     # Stale high-CCU island C (May 17) is excluded; pick freshest metric day (May 24).
     assert ccu.data[0]["island_code"] == "B"
-    assert ccu.data[0]["total_peak_ccu"] == 80.0
-    assert "data_as_of" in ccu.data[0]
+    assert ccu.data[0]["peak_ccu"] == 80.0
+
+    players = service.get_players_online_summary()
+    assert players.status == "ok"
+    assert players.data[0]["peak_ccu_today"] == 80.0
+    assert players.data[0]["active_players_today"] == 50.0
+    assert players.data[0]["unique_players_today"] == 50.0
 
     top = service.get_top_islands(limit=5)
     assert top.status == "ok"
-    assert top.data[0]["peak_ccu"] == 100.0
+    assert len(top.data) == 1
+    assert top.data[0]["island_code"] == "B"
+    assert top.data[0]["peak_ccu"] == 80.0
+    assert top.data[0]["total_islands"] == 1
 
     shop = service.get_shop_rarity_distribution()
     assert shop.status == "ok"
@@ -212,5 +247,5 @@ def test_get_avg_today_fallback_to_latest_date(gold_root: Path, tmp_path, monkey
     service = QueryService(get_settings(), auto_init=True)
     response = service.get_avg_today()
     assert response.status == "ok"
-    assert response.data[0]["avg_peak_ccu"] == 90.0
-    assert response.data[0]["period_label"] == "latest_available"
+    assert response.data[0]["avg_peak_ccu"] == 40.0
+    assert response.data[0]["period_label"] == "today"

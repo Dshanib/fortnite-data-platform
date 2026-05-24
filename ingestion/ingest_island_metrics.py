@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from typing import Any, Dict, List, Optional
 
 from common.exceptions import ApiClientError, IngestionError, KafkaProducerError, ValidationError
@@ -10,6 +11,7 @@ from common.logging import configure_logging, get_logger
 from common.models import SourceHealthEvent
 from config.settings import Settings, get_settings
 from ingestion.clients.ecosystem_api_client import EcosystemApiClient
+from ingestion.island_catalog import iter_island_catalog_pages
 from ingestion.pipeline import IngestionPipeline, build_envelope, print_ingestion_summary
 
 logger = get_logger(__name__)
@@ -40,13 +42,29 @@ def _resolve_island_codes(
     if demo:
         return [demo]
 
-    summaries = client.list_island_summaries()
+    if max_islands is None:
+        max_islands = settings.fortnite_max_islands
+
+    page_cap = settings.fortnite_ecosystem_max_island_pages
+    summaries: List[Dict[str, Any]] = []
+    for _, _, islands in iter_island_catalog_pages(
+        client,
+        page_size=settings.fortnite_ecosystem_island_page_size,
+        max_pages=page_cap,
+    ):
+        summaries.extend(islands)
+
     codes = [code for island in summaries if (code := _island_code(island))]
     if not codes:
         raise IngestionError("No islands available for metrics ingestion")
 
-    if max_islands is not None:
-        return codes[: max(1, max_islands)]
+    if max_islands is not None and max_islands > 0:
+        logger.info(
+            "Limiting island metrics to %s of %s islands (FORTNITE_MAX_ISLANDS)",
+            max_islands,
+            len(codes),
+        )
+        return codes[:max_islands]
     return codes
 
 
@@ -70,7 +88,10 @@ def run_ingestion(
             client, settings, island_code=island_code, max_islands=max_islands
         )
 
-        for code in codes:
+        delay = max(0.0, settings.fortnite_ecosystem_metrics_delay_seconds)
+        for index, code in enumerate(codes):
+            if index > 0 and delay > 0:
+                time.sleep(delay)
             fetch = client.fetch_metrics_bundle(code, interval=interval)
             envelope = build_envelope(
                 event_id=f"{pipeline.correlation_id}:{code}",
@@ -133,7 +154,7 @@ if __name__ == "__main__":
         "--max-islands",
         type=int,
         default=None,
-        help="Limit number of islands (default: all returned by API)",
+        help="Limit number of islands (default: all; use FORTNITE_MAX_ISLANDS=0 for unlimited)",
     )
     parser.add_argument("--island-code", default=None, help="Single island code")
     cli = parser.parse_args()

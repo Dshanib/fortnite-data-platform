@@ -5,8 +5,10 @@ from __future__ import annotations
 from common.models import QueryResponse
 from bot.formatters import (
     format_anomalies,
-    format_current_activity,
+    format_most_active_island,
     format_no_data,
+    format_players_online,
+    format_shop_category_items,
     format_top_islands,
     help_text,
     main_menu_keyboard,
@@ -36,9 +38,35 @@ def test_format_no_data_hebrew() -> None:
     assert "אין מערך חריגות" in text
 
 
-def test_format_current_activity_hebrew() -> None:
+def test_format_players_online_hebrew() -> None:
     response = QueryResponse(
-        query_name="get_current_ccu",
+        query_name="get_players_online_summary",
+        success=True,
+        status="ok",
+        data=[
+            {
+                "metric_date": "2026-05-24",
+                "active_players_today": 500.0,
+                "unique_players_today": 500.0,
+                "peak_ccu_today": 128.0,
+                "plays_today": 1200.0,
+                "islands_with_data": 14,
+                "hours_with_data": 8,
+                "is_calendar_today": True,
+                "data_as_of": "2026-05-24T12:00:00Z",
+            }
+        ],
+    )
+    text = format_players_online(response)
+    assert "500" in text
+    assert "שחקנים פעילים" in text
+    assert "1,200" in text or "1200" in text
+    assert "Gold" not in text
+
+
+def test_format_most_active_island_hebrew() -> None:
+    response = QueryResponse(
+        query_name="get_most_active_island",
         success=True,
         status="ok",
         data=[
@@ -46,15 +74,40 @@ def test_format_current_activity_hebrew() -> None:
                 "island_code": "A",
                 "title": "אי בדיקה",
                 "peak_ccu": 42.0,
-                "total_peak_ccu": 100.0,
-                "latest_metric_timestamp": "2026-05-17T12:00:00Z",
+                "unique_players": 30.0,
+                "plays": 5.0,
+                "minutes_played": 100.0,
+                "latest_metric_timestamp": "2026-05-24T12:00:00Z",
+                "data_as_of": "2026-05-24T12:00:00Z",
             }
         ],
     )
-    text = format_current_activity(response)
+    text = format_most_active_island(response)
     assert "אי בדיקה" in text
     assert "42" in text
-    assert "שחקנים מחוברים" in text
+    assert "הכי פעיל" in text
+
+
+def test_format_shop_category_items_hebrew() -> None:
+    response = QueryResponse(
+        query_name="get_shop_items_by_category",
+        success=True,
+        status="ok",
+        data=[
+            {
+                "item_name": "סקין בדיקה",
+                "rarity": "epic",
+                "final_price": 1500,
+                "regular_price": 2000,
+                "snapshot_date": "2026-05-24",
+                "category": "outfit",
+            }
+        ],
+    )
+    text = format_shop_category_items(response, category="outfit")
+    assert "סקין בדיקה" in text
+    assert "אפיק" in text
+    assert "1,500" in text or "1500" in text
 
 
 def test_format_top_islands_hebrew() -> None:
@@ -70,7 +123,7 @@ def test_format_top_islands_hebrew() -> None:
     text = format_top_islands(response)
     assert "#1" in text
     assert "ראשון" in text
-    assert "פופולריים" in text
+    assert "פעילים" in text or "איים" in text
 
 
 def test_format_anomalies_hebrew() -> None:
@@ -92,6 +145,7 @@ def test_format_anomalies_hebrew() -> None:
     text = format_anomalies(response)
     assert "חריגות" in text
     assert "אי חריג" in text
+    assert "גבוהה" in text
     assert "100" in text
 
 
@@ -102,9 +156,9 @@ def test_main_menu_has_primary_actions() -> None:
         for row in keyboard.inline_keyboard
         for btn in row
     ]
-    assert MenuAction.CURRENT_ACTIVITY.value in callbacks
+    assert MenuAction.ACTIVITY_HUB.value in callbacks
+    assert MenuAction.SHOP_HUB.value in callbacks
     assert MenuAction.ANOMALIES.value in callbacks
-    assert MenuAction.SOURCE_HEALTH.value not in callbacks
     assert len(callbacks) == 5
 
 
