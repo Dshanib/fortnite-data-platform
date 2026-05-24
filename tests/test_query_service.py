@@ -45,11 +45,22 @@ def gold_root(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Path:
                     "island_code": "B",
                     "title": "Island B",
                     "creator_code": "c2",
-                    "latest_metric_timestamp": "2026-05-17T12:00:00Z",
+                    "latest_metric_timestamp": "2026-05-24T10:00:00Z",
                     "peak_ccu": 80.0,
                     "unique_players": 40.0,
                     "plays": 8.0,
                     "minutes_played": 150.0,
+                    "updated_at": "2026-05-24T10:00:00Z",
+                },
+                {
+                    "island_code": "C",
+                    "title": "Stale High CCU",
+                    "creator_code": "c3",
+                    "latest_metric_timestamp": "2026-05-17T12:00:00Z",
+                    "peak_ccu": 500.0,
+                    "unique_players": 10.0,
+                    "plays": 1.0,
+                    "minutes_played": 5.0,
                     "updated_at": "2026-05-17T12:00:00Z",
                 },
             ]
@@ -172,8 +183,10 @@ def test_query_service_reads_gold_views(gold_root: Path, tmp_path, monkeypatch: 
 
     ccu = service.get_current_ccu()
     assert ccu.status == "ok"
-    assert ccu.data[0]["island_code"] == "A"
-    assert ccu.data[0]["total_peak_ccu"] == 180.0
+    # Stale high-CCU island C (May 17) is excluded; pick freshest metric day (May 24).
+    assert ccu.data[0]["island_code"] == "B"
+    assert ccu.data[0]["total_peak_ccu"] == 80.0
+    assert "data_as_of" in ccu.data[0]
 
     top = service.get_top_islands(limit=5)
     assert top.status == "ok"

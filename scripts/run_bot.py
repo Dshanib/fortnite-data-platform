@@ -59,6 +59,9 @@ def _python_executable() -> str:
 
 
 def main() -> int:
+    lock_file = _ROOT / "data" / ".telegram_bot.lock"
+    lock_file.unlink(missing_ok=True)
+
     stopped = stop_bot_instances()
     if stopped:
         safe_print(f"Stopped {stopped} existing bot process(es).")

@@ -335,6 +335,12 @@ python scripts/check_duckdb_serving.py --mode direct_minio
 python -m bot.app
 ```
 
+Only **one** bot process is allowed (PID lock at `data/.telegram_bot.lock`). A second start exits with an error. To replace a running bot on Windows:
+
+```bash
+python scripts/run_bot.py
+```
+
 ### Menu (primary UX — Hebrew)
 
 | Command / action | Query |

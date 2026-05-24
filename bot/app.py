@@ -8,6 +8,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Mess
 
 from bot.formatters import format_error, main_menu_keyboard
 from bot.handlers import BotHandlers
+from bot.single_instance import ensure_single_instance
 from common.logging import configure_logging, get_logger
 from common.models import QueryResponse
 from config.settings import get_settings
@@ -67,6 +68,7 @@ async def _error_handler(update: object, context) -> None:
 def main() -> None:
     """Run the Telegram bot."""
     _configure_stdio_utf8()
+    ensure_single_instance()
     logger.info("Starting Fortnite Telegram bot (Hebrew UI)")
     app = build_application()
     app.run_polling()

@@ -83,7 +83,9 @@ def format_current_activity(response: QueryResponse) -> str:
     code = row.get("island_code", "?")
     peak = format_number(row.get("peak_ccu"))
     total = format_number(row.get("total_peak_ccu"))
-    updated = format_timestamp(row.get("latest_metric_timestamp"))
+    updated = format_timestamp(
+        row.get("data_as_of") or row.get("latest_metric_timestamp")
+    )
 
     body = (
         f"🥇 <b>{esc(t.LABEL_ISLAND)}:</b> {esc(title)}\n"

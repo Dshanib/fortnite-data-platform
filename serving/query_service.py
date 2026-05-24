@@ -114,21 +114,35 @@ class QueryService:
             return self._error(query_name, f"Query error: {exc}")
 
     def get_current_ccu(self) -> QueryResponse:
-        """Top island by peak_ccu and sum of visible peak_ccu across islands."""
+        """Top island by peak_ccu among recently updated islands; global data_as_of timestamp."""
         return self._run_query(
             "get_current_ccu",
             """
-            WITH activity AS (
-                SELECT island_code, title, peak_ccu, latest_metric_timestamp
+            WITH bounds AS (
+                SELECT MAX(CAST(latest_metric_timestamp AS TIMESTAMPTZ)) AS data_as_of
                 FROM vw_current_island_activity
-                WHERE peak_ccu IS NOT NULL
+            ),
+            activity AS (
+                SELECT
+                    a.island_code,
+                    a.title,
+                    a.peak_ccu,
+                    CAST(a.latest_metric_timestamp AS TIMESTAMPTZ) AS latest_metric_timestamp,
+                    b.data_as_of
+                FROM vw_current_island_activity AS a
+                CROSS JOIN bounds AS b
+                WHERE a.peak_ccu IS NOT NULL
+                  AND b.data_as_of IS NOT NULL
+                  AND date_trunc('day', CAST(a.latest_metric_timestamp AS TIMESTAMPTZ))
+                      = date_trunc('day', b.data_as_of)
             )
             SELECT
                 island_code,
                 title,
                 peak_ccu,
                 (SELECT COALESCE(SUM(peak_ccu), 0) FROM activity) AS total_peak_ccu,
-                latest_metric_timestamp
+                latest_metric_timestamp,
+                data_as_of
             FROM activity
             ORDER BY peak_ccu DESC
             LIMIT 1
@@ -137,15 +151,30 @@ class QueryService:
         )
 
     def get_top_islands(self, limit: int = 10) -> QueryResponse:
-        """Ranked islands from gold top_islands_by_peak_ccu."""
+        """Ranked islands from gold, preferring the latest metric day in Gold."""
         safe_limit = max(1, min(int(limit), 100))
         return self._run_query(
             "get_top_islands",
             f"""
-            SELECT rank, island_code, title, peak_ccu, unique_players, plays,
-                   latest_metric_timestamp
-            FROM vw_top_islands_by_peak_ccu
-            ORDER BY rank ASC
+            WITH bounds AS (
+                SELECT MAX(CAST(latest_metric_timestamp AS TIMESTAMPTZ)) AS data_as_of
+                FROM vw_top_islands_by_peak_ccu
+            )
+            SELECT
+                t.rank,
+                t.island_code,
+                t.title,
+                t.peak_ccu,
+                t.unique_players,
+                t.plays,
+                CAST(t.latest_metric_timestamp AS TIMESTAMPTZ) AS latest_metric_timestamp,
+                b.data_as_of
+            FROM vw_top_islands_by_peak_ccu AS t
+            CROSS JOIN bounds AS b
+            WHERE b.data_as_of IS NULL
+               OR date_trunc('day', CAST(t.latest_metric_timestamp AS TIMESTAMPTZ))
+                  = date_trunc('day', b.data_as_of)
+            ORDER BY t.rank ASC
             LIMIT {safe_limit}
             """,
             required_view="vw_top_islands_by_peak_ccu",
