@@ -387,6 +387,4 @@ Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml). No secrets req
   `set PYTHONIOENCODING=utf-8` (cmd) / `$env:PYTHONIOENCODING='utf-8'` (PowerShell)
 - **Kafka connection refused:** start `zookeeper` and `kafka` via Docker Compose first
 
-## Git
 
-Development branch: `dev`. Never commit `.env`.
